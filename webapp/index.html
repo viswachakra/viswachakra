@@ -442,7 +442,7 @@ let sumData=null;
 async function ensureSummaryData(){
   if(sumData)return;
   // reads PRECOMPUTED columns only — no workflow download, so this is fast even with thousands of cases
-  const cases=await fetchAll('cases','case_no,patient_name,claim_no,claim_status,ip_registration_dt,status_date,claimed_amount,paid_amount,is_paid,latest_comment,latest_comment_by,ip_no,card_no,contact_no');
+  const cases=await fetchAllPar('cases','case_no,patient_name,claim_no,claim_status,ip_registration_dt,status_date,claimed_amount,paid_amount,is_paid,latest_comment,latest_comment_by,ip_no,card_no,contact_no');
   sumData=cases.map(c=>({
     case_no:c.case_no, patient_name:c.patient_name, claim_no:c.claim_no, status:c.claim_status||'',
     ip_reg:c.ip_registration_dt||'', status_date:c.status_date||'',
@@ -514,6 +514,17 @@ async function fetchAll(table,cols){
   }
   return out;
 }
+// Faster large fetch: count once, then pull all pages CONCURRENTLY instead of one-after-another.
+// Big win on high-latency links where N sequential round-trips dominate. Falls back to fetchAll if count is unavailable.
+async function fetchAllPar(table,cols){
+  const {count,error}=await sb.from(table).select('*',{count:'exact',head:true});
+  if(error||count==null)return fetchAll(table,cols);
+  const size=1000,pages=Math.ceil(count/size);
+  if(pages<=1){const {data,error:e}=await sb.from(table).select(cols).range(0,size-1);if(e)throw new Error(e.message);return data||[];}
+  const reqs=[];
+  for(let i=0;i<pages;i++)reqs.push(sb.from(table).select(cols).range(i*size,i*size+size-1).then(r=>{if(r.error)throw new Error(r.error.message);return r.data||[];}));
+  return (await Promise.all(reqs)).flat();
+}
 
 const charts={};
 function makeChart(id,cfg){if(charts[id])charts[id].destroy();charts[id]=new Chart($(id),cfg);}
@@ -534,7 +545,7 @@ function dashPeriod(rows){
 }
 function showDashError(e){$('dash-loading').innerHTML='Couldn\'t load the dashboard — '+esc((e&&e.message)||'network error')+'. <a href="#" id="dash-retry" style="color:var(--primary);font-weight:600">Retry</a>';$('dash-loading').style.display='block';$('dash-content').style.display='none';const r=$('dash-retry');if(r)r.onclick=ev=>{ev.preventDefault();dashAll=null;$('dash-loading').textContent='Crunching the numbers…';loadDashboard();};}
 async function loadDashboard(){
-  try{ if(!dashAll)dashAll=await fetchAll('cases','case_no,claim_status,status_date,ip_registration_dt,procedure_name,claimed_amount,paid_amount,deduction,is_paid,paid_date,settlement_days'); }
+  try{ if(!dashAll)dashAll=await fetchAllPar('cases','case_no,claim_status,status_date,ip_registration_dt,procedure_name,claimed_amount,paid_amount,deduction,is_paid,paid_date,settlement_days'); }
   catch(e){ showDashError(e); return; }
   const cases=dashPeriod(dashAll);
   const now=new Date();
@@ -847,8 +858,11 @@ function deriveClaim(c,rows){
 }
 async function ensureClaimsData(){
   if(cmData)return;
-  const cases=await fetchAll('cases','case_no,claim_no,card_no,patient_name,ip_registration_dt,procedure_name,claimed_amount,paid_amount,paid_date,claim_status,latest_comment,is_paid,contact_no');
-  const wf=await fetchAll('claim_workflow','case_no,row_index,date_time,action,amount,remarks,role_name');
+  // fetch cases + workflow in parallel; workflow omits `remarks` (unused here — Remarks col comes from latest_comment)
+  const [cases,wf]=await Promise.all([
+    fetchAllPar('cases','case_no,claim_no,card_no,patient_name,ip_registration_dt,procedure_name,claimed_amount,paid_amount,paid_date,claim_status,latest_comment,is_paid,contact_no'),
+    fetchAllPar('claim_workflow','case_no,row_index,date_time,action,amount,role_name'),
+  ]);
   const byCase={};wf.forEach(r=>{(byCase[r.case_no]=byCase[r.case_no]||[]).push(r);});
   cmData=cases.map(c=>deriveClaim(c,byCase[c.case_no]||[]));
 }
@@ -939,8 +953,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
 $('export-btn').addEventListener('click',async()=>{
   $('export-btn').textContent='…';
   try{
-    const cases=await fetchAll('cases','*');           // paginated — was capped at 1000 rows
-    const wf=await fetchAll('claim_workflow','*');
+    const [cases,wf]=await Promise.all([fetchAllPar('cases','*'),fetchAllPar('claim_workflow','*')]);  // paginated + parallel (was capped at 1000 rows)
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(cases||[]),'Cases');
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(wf||[]),'Claim workflow');
