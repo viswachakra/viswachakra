@@ -22,7 +22,17 @@ create table if not exists cases (
   status_date         text,
   workflow_note       text,
   deep_synced         timestamptz,
-  last_synced         timestamptz
+  last_synced         timestamptz,
+  -- precomputed settlement summary (filled by the scraper / refresh scripts)
+  claimed_amount      integer,
+  paid_amount         integer,
+  paid_date           text,
+  settlement_days     integer,
+  deduction           integer,
+  is_paid             boolean default false,
+  latest_comment      text,
+  latest_comment_by   text,
+  latest_comment_date text
 );
 
 create table if not exists claim_workflow (
@@ -52,6 +62,7 @@ create table if not exists sync_runs (
 create index if not exists idx_workflow_case      on claim_workflow (case_no);
 create index if not exists idx_cases_claim_status on cases (claim_status);
 create index if not exists idx_cases_status_date  on cases (status_date);
+create index if not exists idx_cases_is_paid       on cases (is_paid);
 
 -- Row Level Security: lock the tables so only authenticated app users can read.
 -- The scraper writes using the service_role key, which bypasses RLS.
