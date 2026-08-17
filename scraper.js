@@ -619,7 +619,7 @@ async function listRanges(windows, opts = {}) {
       const [from, to] = windows[i];
       if (i > 0 && i % reloginEvery === 0) { log(`  [proactive re-login after ${reloginEvery} windows]`); await fresh(); }
 
-      let caseNos = []; let total = 0; let ok = false;
+      let caseNos = []; let records = []; let total = 0; let ok = false;
       for (let attempt = 1; attempt <= maxTries; attempt++) {
         try {
           await gotoCasesSearch(page, log);
@@ -630,18 +630,18 @@ async function listRanges(windows, opts = {}) {
               () => /No\s+(records|results)\s+found/i.test(document.body ? document.body.textContent : ''),
             ).catch(() => false);
             if (!genuineEmpty) throw new Error('no results table (timeout/blocked) - needs retry');
-            caseNos = []; ok = true; break;
+            caseNos = []; records = []; ok = true; break;
           }
           const list = await scrapeResultsList(page);
           const nos = list.map((r) => r.case_no).filter(Boolean);
           if (nos.length < total) throw new Error(`partial list ${nos.length}/${total} - needs retry`);
-          caseNos = nos; ok = true; break;
+          caseNos = nos; records = list; ok = true; break;
         } catch (e) {
           log(`  [${from} -> ${to}] attempt ${attempt}/${maxTries} failed: ${String((e && e.message) || e).split('\n')[0]}`);
           if (attempt < maxTries) await fresh();
         }
       }
-      const result = { from, to, total, caseNos, ok };
+      const result = { from, to, total, caseNos, records, ok };
       out.push(result);
       if (onResult) await onResult(result, i);
       await page.waitForTimeout(400);
