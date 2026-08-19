@@ -55,6 +55,8 @@
   .hright{margin-left:auto;display:flex;align-items:center;gap:9px}
   .pill{font-size:12px;color:var(--text-2);background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:5px 12px}
   main{max-width:1280px;margin:0 auto;padding:22px 24px 60px}
+  /* data-table pages use the full browser width; the dashboard stays contained */
+  #view-cases,#view-claims,#view-sync{max-width:none}
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:18px}
   .kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
   .kpi .l{font-size:11.5px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
@@ -926,10 +928,13 @@ function cmFilteredRows(){
 function saveCols(){localStorage.setItem('vc-cm-hidden',JSON.stringify([...cmHidden]));}
 function buildCmHead(){
   const cols=visCols();let tw=0;cols.forEach(c=>tw+=c.w);
-  $('cm-head').innerHTML='<tr>'+cols.map(c=>`<th data-cmcol="${c.key}" style="width:${c.w}px;cursor:pointer">${c.label}<span class="sar"></span></th>`).join('')+'</tr>';
-  $('cm-table').style.width=tw+'px';
+  const cw=($('cm-table').parentElement?$('cm-table').parentElement.clientWidth:0)||tw;
+  const f=tw>0?Math.max(1,cw/tw):1;  // stretch columns to fill the page when narrower; natural width (scrolls) when wider
+  $('cm-head').innerHTML='<tr>'+cols.map(c=>`<th data-cmcol="${c.key}" style="width:${Math.round(c.w*f)}px;cursor:pointer">${c.label}<span class="sar"></span></th>`).join('')+'</tr>';
+  $('cm-table').style.width=Math.max(tw,cw)+'px';
   $('cm-head').querySelectorAll('th[data-cmcol]').forEach(th=>{th.onclick=()=>{const k=th.dataset.cmcol,col=CM_COLS.find(x=>x.key===k);if(cmSort.col===k)cmSort.dir=cmSort.dir==='asc'?'desc':'asc';else{cmSort.col=k;cmSort.dir=(col.type==='num'||col.type==='date')?'desc':'asc';}cmPage=1;renderClaims();};});
 }
+let cmResizeT; window.addEventListener('resize',()=>{clearTimeout(cmResizeT);cmResizeT=setTimeout(()=>{if(cmSetup&&$('view-claims').style.display!=='none')buildCmHead();},150);});
 function setupColPicker(){
   const menu=$('cm-cols-menu');
   menu.innerHTML=CM_COLS.map(c=>`<label><input type="checkbox" data-col="${c.key}" ${cmHidden.has(c.key)?'':'checked'} ${c.key==='claim_id'?'disabled':''}> ${c.label}</label>`).join('')
@@ -972,7 +977,7 @@ function renderClaims(){
   $('cm-cur').textContent=cmPage;$('cm-prev').disabled=cmPage<=1;$('cm-next').disabled=to>=total;
   $('cm-head').querySelectorAll('th[data-cmcol]').forEach(th=>{const sar=th.querySelector('.sar');if(sar)sar.textContent=th.dataset.cmcol===cmSort.col?(cmSort.dir==='asc'?' ▲':' ▼'):'';});
 }
-async function loadClaims(){try{await ensureClaimsData();setupClaims();$('cm-loading').style.display='none';$('cm-content').style.display='block';renderClaims();}catch(e){$('cm-loading').innerHTML='Couldn\'t load the claims register — '+esc((e&&e.message)||'network error');$('cm-loading').style.display='block';$('cm-content').style.display='none';}}
+async function loadClaims(){try{await ensureClaimsData();$('cm-loading').style.display='none';$('cm-content').style.display='block';setupClaims();buildCmHead();renderClaims();}catch(e){$('cm-loading').innerHTML='Couldn\'t load the claims register — '+esc((e&&e.message)||'network error');$('cm-loading').style.display='block';$('cm-content').style.display='none';}}
 
 // ---- Sync History tab: shows the hourly sync's run log so a broken sync is obvious ----
 async function loadSync(){
