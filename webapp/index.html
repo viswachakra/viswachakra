@@ -740,7 +740,7 @@ async function loadStats(){
   const paid=(await sb.from('cases').select('*',{count:'exact',head:true}).eq('is_paid',true)).count||0;  // use is_paid so this agrees with the dashboard & tables
   $('k-total').textContent=total.toLocaleString();$('k-wf').textContent=wf.toLocaleString();
   $('k-hold').textContent=hold.toLocaleString();$('k-paid').textContent=paid.toLocaleString();
-  const {data}=await sb.from('cases').select('last_synced').order('last_synced',{ascending:false}).limit(1);
+  const {data}=await sb.from('cases').select('last_synced').not('last_synced','is',null).order('last_synced',{ascending:false}).limit(1);
   $('sync-pill').textContent=data&&data[0]?'Last sync '+new Date(data[0].last_synced).toLocaleString():'–';
 }
 // Cases tab: the single worklist — filter, sort, paginate the shared dataset.
