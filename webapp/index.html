@@ -126,6 +126,18 @@
   .pager .grow{flex:1}
   .empty{text-align:center;color:var(--text-3);padding:40px}
   .cmscroll{overflow-x:auto}
+  .colpick{position:relative;flex:0 0 auto}
+  .colpick-menu{display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:30;background:var(--card);border:1px solid var(--border-strong);border-radius:10px;box-shadow:0 8px 24px rgba(16,19,34,.16);padding:8px;min-width:210px;max-height:360px;overflow-y:auto}
+  .colpick-menu.open{display:block}
+  .colpick-menu label{display:flex;align-items:center;gap:8px;padding:5px 8px;font-size:13px;font-weight:500;color:var(--text);cursor:pointer;border-radius:6px;margin:0;text-transform:none;letter-spacing:0}
+  .colpick-menu label:hover{background:var(--bg)}
+  .colpick-menu input{width:auto;margin:0}
+  .colpick-actions{display:flex;gap:6px;padding:8px 4px 2px;border-top:1px solid var(--border);margin-top:6px}
+  .colpick-actions button{flex:1;font-size:11.5px;padding:6px}
+  tr.sy-fail td{background:var(--red-bg)}
+  .sybadge{display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px}
+  .sybadge.ok{background:var(--green-bg);color:var(--green-fg)}
+  .sybadge.fail{background:var(--red-bg);color:var(--red-fg)}
   table.cmtab{border-collapse:collapse;font-size:12.5px;table-layout:fixed}
   .cmtab th{text-align:left;padding:9px 10px;background:var(--bg);color:var(--text-2);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmtab th[data-cmcol]:hover{color:var(--primary)}
@@ -200,6 +212,7 @@
       <button id="nav-dash" class="on">Dashboard</button>
       <button id="nav-cases">Cases</button>
       <button id="nav-claims">Claims Master</button>
+      <button id="nav-sync">Sync History</button>
     </nav>
     <div class="hright">
       <span class="pill" id="sync-pill">–</span>
@@ -351,6 +364,7 @@
         <select id="cm-month" title="Registration month"><option value="">Any registration month</option></select>
         <input type="date" id="cm-from" class="dtin" title="Registered from">
         <input type="date" id="cm-to" class="dtin" title="Registered to">
+        <div class="colpick"><button class="btn sm ghost" id="cm-cols-btn">☰ Columns</button><div class="colpick-menu" id="cm-cols-menu"></div></div>
         <button class="btn sm ghost" id="cm-clear">Clear</button>
         <button class="btn sm ghost" id="cm-export">⬇ Excel</button>
       </div>
@@ -364,6 +378,26 @@
           <button class="btn sm ghost" id="cm-prev">‹ Prev</button><span id="cm-cur">1</span><button class="btn sm ghost" id="cm-next">Next ›</button>
         </div>
       </div>
+    </div>
+  </main>
+
+  <main id="view-sync" style="display:none">
+    <div class="kpis" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi"><div class="l">Last successful sync</div><div class="v green" id="sy-last" style="font-size:15px">–</div></div>
+      <div class="kpi"><div class="l">Runs (last 7 days)</div><div class="v" id="sy-count">–</div></div>
+      <div class="kpi"><div class="l">Failures (last 7 days)</div><div class="v" id="sy-fail">–</div></div>
+    </div>
+    <div id="sy-banner" style="display:none;margin-bottom:14px;padding:12px 16px;border-radius:10px;font-size:13.5px;font-weight:600"></div>
+    <div class="toolbar"><span style="font-size:11.5px;color:var(--text-3)">The hourly sync pulls recent portal changes into this app. A <b>failed</b> run, or a long gap since the last success, means the sync is broken and needs a look.</span><span class="grow"></span><button class="btn sm ghost" id="sy-refresh">↻ Refresh</button></div>
+    <div class="card">
+      <table>
+        <thead><tr>
+          <th style="width:20%">When (run started)</th><th style="width:11%">Status</th>
+          <th style="width:27%">Window scanned</th><th style="width:9%">Found</th>
+          <th style="width:11%">Deep-scraped</th><th style="width:22%">Message</th>
+        </tr></thead>
+        <tbody id="sy-rows"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+      </table>
     </div>
   </main>
 
@@ -429,12 +463,14 @@ function setupNav(){
   $('nav-dash').onclick=()=>switchView('dash');
   $('nav-cases').onclick=()=>switchView('cases');
   $('nav-claims').onclick=()=>switchView('claims');
+  $('nav-sync').onclick=()=>switchView('sync');
 }
 function switchView(v){
-  ['dash','cases','claims'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
+  ['dash','cases','claims','sync'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
   if(v==='dash')resizeCharts();
   if(v==='cases')loadCases();
   if(v==='claims')loadClaims();
+  if(v==='sync')loadSync();
 }
 
 // ---- shared client-side dataset: precomputed per-case claimed / paid / comment ----
@@ -822,6 +858,10 @@ const CM_COLS=[
   {key:'follow_up',label:'Follow-up Needed',w:120},
   {key:'remarks',label:'Remarks',w:260},
 ];
+// which columns the user has hidden (persisted). claim_id can't be hidden (it's the row link).
+let cmHidden=new Set((()=>{try{return JSON.parse(localStorage.getItem('vc-cm-hidden')||'[]');}catch(e){return [];}})());
+cmHidden.delete('claim_id');
+const visCols=()=>CM_COLS.filter(c=>!cmHidden.has(c.key));
 let cmData=null,cmPage=1,cmSort={col:'submission_date',dir:'desc'},cmSetup=false;
 function fmtD(d){if(!d)return null;const p=n=>String(n).padStart(2,'0');return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear();}
 function parseCaseDate(s){const m=String(s||'').match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);if(!m)return null;return new Date(+m[3],+m[2]-1,+m[1],+(m[4]||0),+(m[5]||0));}
@@ -883,12 +923,28 @@ function cmFilteredRows(){
   if(q)rows=rows.filter(r=>r._search.includes(q));
   return sortCm(rows,cmSort);
 }
+function saveCols(){localStorage.setItem('vc-cm-hidden',JSON.stringify([...cmHidden]));}
+function buildCmHead(){
+  const cols=visCols();let tw=0;cols.forEach(c=>tw+=c.w);
+  $('cm-head').innerHTML='<tr>'+cols.map(c=>`<th data-cmcol="${c.key}" style="width:${c.w}px;cursor:pointer">${c.label}<span class="sar"></span></th>`).join('')+'</tr>';
+  $('cm-table').style.width=tw+'px';
+  $('cm-head').querySelectorAll('th[data-cmcol]').forEach(th=>{th.onclick=()=>{const k=th.dataset.cmcol,col=CM_COLS.find(x=>x.key===k);if(cmSort.col===k)cmSort.dir=cmSort.dir==='asc'?'desc':'asc';else{cmSort.col=k;cmSort.dir=(col.type==='num'||col.type==='date')?'desc':'asc';}cmPage=1;renderClaims();};});
+}
+function setupColPicker(){
+  const menu=$('cm-cols-menu');
+  menu.innerHTML=CM_COLS.map(c=>`<label><input type="checkbox" data-col="${c.key}" ${cmHidden.has(c.key)?'':'checked'} ${c.key==='claim_id'?'disabled':''}> ${c.label}</label>`).join('')
+    +'<div class="colpick-actions"><button class="btn sm ghost" id="cmc-all">Show all</button><button class="btn sm ghost" id="cmc-none">Hide all</button></div>';
+  const sync=()=>menu.querySelectorAll('input[data-col]').forEach(cb=>{cb.checked=!cmHidden.has(cb.dataset.col);});
+  menu.querySelectorAll('input[data-col]').forEach(cb=>cb.onchange=()=>{const k=cb.dataset.col;if(cb.checked)cmHidden.delete(k);else cmHidden.add(k);saveCols();buildCmHead();renderClaims();});
+  $('cmc-all').onclick=()=>{cmHidden.clear();saveCols();sync();buildCmHead();renderClaims();};
+  $('cmc-none').onclick=()=>{cmHidden=new Set(CM_COLS.filter(c=>c.key!=='claim_id').map(c=>c.key));saveCols();sync();buildCmHead();renderClaims();};
+  $('cm-cols-btn').onclick=(e)=>{e.stopPropagation();menu.classList.toggle('open');};
+  document.addEventListener('click',(e)=>{if(!e.target.closest('.colpick'))menu.classList.remove('open');});
+}
 function setupClaims(){
   if(!cmSetup){
-    let tw=0;CM_COLS.forEach(c=>tw+=c.w);
-    $('cm-head').innerHTML='<tr>'+CM_COLS.map(c=>`<th data-cmcol="${c.key}" style="width:${c.w}px;cursor:pointer">${c.label}<span class="sar"></span></th>`).join('')+'</tr>';
-    $('cm-table').style.width=tw+'px';
-    $('cm-head').querySelectorAll('th[data-cmcol]').forEach(th=>{th.onclick=()=>{const k=th.dataset.cmcol,col=CM_COLS.find(x=>x.key===k);if(cmSort.col===k)cmSort.dir=cmSort.dir==='asc'?'desc':'asc';else{cmSort.col=k;cmSort.dir=(col.type==='num'||col.type==='date')?'desc':'asc';}cmPage=1;renderClaims();};});
+    buildCmHead();
+    setupColPicker();
     cmSetup=true;
   }
   const sel=$('cm-status'),cur=sel.value;
@@ -908,8 +964,8 @@ function renderClaims(){
   const inr=n=>n==null?'<span style="color:var(--text-3)">–</span>':'₹'+Number(n).toLocaleString('en-IN');
   const disp=(r,c)=>{const v=r[c.key];if(c.type==='date')return esc(fmtD(v))||'–';if(c.type==='num')return c.key==='days_pending'?(v==null?'–':v):inr(v);if(c.key==='insurance'||c.key==='scheme')return esc(v)||'';return esc(v)||'–';};
   const titl=(r,c)=>esc(c.type==='date'?(fmtD(r[c.key])||''):(r[c.key]==null?'':String(r[c.key])));
-  const tb=$('cm-rows');
-  tb.innerHTML=pageRows.length?pageRows.map(r=>'<tr class="row" data-case="'+esc(r._case_no)+'">'+CM_COLS.map(c=>`<td class="${c.key==='claim_id'?'link':''}" title="${titl(r,c)}">${disp(r,c)}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${CM_COLS.length}" class="empty">No claims found</td></tr>`;
+  const tb=$('cm-rows'),cols=visCols();
+  tb.innerHTML=pageRows.length?pageRows.map(r=>'<tr class="row" data-case="'+esc(r._case_no)+'">'+cols.map(c=>`<td class="${c.key==='claim_id'?'link':''}" title="${titl(r,c)}">${disp(r,c)}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${cols.length}" class="empty">No claims found</td></tr>`;
   tb.querySelectorAll('tr.row').forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.case));
   const to=Math.min(total,cmPage*ps);
   $('cm-info').textContent=total?`Showing ${from+1}–${to} of ${total.toLocaleString()} claims`:'No claims';
@@ -917,6 +973,32 @@ function renderClaims(){
   $('cm-head').querySelectorAll('th[data-cmcol]').forEach(th=>{const sar=th.querySelector('.sar');if(sar)sar.textContent=th.dataset.cmcol===cmSort.col?(cmSort.dir==='asc'?' ▲':' ▼'):'';});
 }
 async function loadClaims(){try{await ensureClaimsData();setupClaims();$('cm-loading').style.display='none';$('cm-content').style.display='block';renderClaims();}catch(e){$('cm-loading').innerHTML='Couldn\'t load the claims register — '+esc((e&&e.message)||'network error');$('cm-loading').style.display='block';$('cm-content').style.display='none';}}
+
+// ---- Sync History tab: shows the hourly sync's run log so a broken sync is obvious ----
+async function loadSync(){
+  try{
+    const {data,error}=await sb.from('sync_runs').select('*').order('started_at',{ascending:false}).limit(400);
+    if(error)throw new Error(error.message);
+    // the mirror inserts duplicates — dedupe by (started_at,status)
+    const seen=new Set(),runs=[];
+    (data||[]).forEach(r=>{const k=(r.started_at||'')+'|'+(r.status||'');if(seen.has(k))return;seen.add(k);runs.push(r);});
+    const now=Date.now(), wk=now-7*864e5;
+    const recent=runs.filter(r=>r.started_at&&new Date(r.started_at).getTime()>=wk);
+    const fails=recent.filter(r=>/fail/i.test(r.status||''));
+    const lastOk=runs.find(r=>/success/i.test(r.status||''));
+    const hrs=lastOk?(now-new Date(lastOk.started_at).getTime())/36e5:Infinity;
+    $('sy-last').textContent=lastOk?new Date(lastOk.started_at).toLocaleString():'never';
+    $('sy-count').textContent=recent.length;
+    $('sy-fail').textContent=fails.length; $('sy-fail').className='v '+(fails.length?'amber':'green');
+    const b=$('sy-banner'); b.style.display='block';
+    if(!lastOk||hrs>3){b.style.background='var(--red-bg)';b.style.color='var(--red-fg)';b.textContent=lastOk?('⚠ The last successful sync was '+Math.round(hrs)+' hours ago — the hourly sync looks broken and needs attention.'):'⚠ No successful sync on record — the sync is not running.';}
+    else if(fails.length){b.style.background='var(--amber-bg)';b.style.color='var(--amber-fg)';b.textContent='⚠ '+fails.length+' failed run(s) in the last 7 days, but the latest sync succeeded ('+Math.round(hrs)+'h ago).';}
+    else{b.style.background='var(--green-bg)';b.style.color='var(--green-fg)';b.textContent='✓ Sync is healthy — last successful run '+Math.round(hrs)+'h ago, running about hourly.';}
+    const win=r=>(r.from_dt&&r.to_dt)?(r.from_dt+'  →  '+r.to_dt):'–';
+    $('sy-rows').innerHTML=runs.length?runs.slice(0,200).map(r=>{const ok=/success/i.test(r.status||'');return `<tr class="${ok?'':'sy-fail'}"><td style="white-space:nowrap">${r.started_at?esc(new Date(r.started_at).toLocaleString()):'–'}</td><td><span class="sybadge ${ok?'ok':'fail'}">${ok?'success':esc(r.status||'?')}</span></td><td style="font-size:12px;color:var(--text-2)">${esc(win(r))}</td><td>${r.total_found!=null?r.total_found:'–'}</td><td>${r.deep_scraped!=null?r.deep_scraped:'–'}</td><td style="font-size:12px;color:var(--red-fg)">${esc(r.message||'')}</td></tr>`;}).join(''):'<tr><td colspan="6" class="empty">No sync runs recorded yet.</td></tr>';
+  }catch(e){$('sy-rows').innerHTML='<tr><td colspan="6" class="empty">Couldn\'t load sync history — '+esc((e&&e.message)||'network error')+'</td></tr>';}
+}
+if($('sy-refresh'))$('sy-refresh').onclick=()=>loadSync();
 function fmtRemarks(t){
   if(/\(\d+\)\s*:/.test(t)){const parts=t.split(/\(\d+\)\s*:\s*/).map(p=>p.trim()).filter(Boolean);
     return'<ol>'+parts.map(p=>'<li>'+esc(p).replace(/\?\s*YES\b/g,'? <span class="yes">YES</span>').replace(/\?\s*NO\b/g,'? <span class="no">NO</span>')+'</li>').join('')+'</ol>';}
@@ -986,8 +1068,9 @@ $('cm-from').addEventListener('change',()=>{$('cm-month').value='';cmPage=1;rend
 $('cm-to').addEventListener('change',()=>{$('cm-month').value='';cmPage=1;renderClaims();});
 $('cm-clear').onclick=()=>{['cm-q','cm-pay','cm-status','cm-month','cm-from','cm-to'].forEach(id=>{$(id).value='';});cmPage=1;renderClaims();};
 $('cm-export').onclick=()=>{
-  const rows=cmFilteredRows().map(r=>{const o={};CM_COLS.forEach(c=>{let v=r[c.key];if(c.type==='date')v=fmtD(v)||'';o[c.label]=(v==null?'':v);});return o;});
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows,{header:CM_COLS.map(c=>c.label)}),'Claims Master');
+  const cols=visCols();
+  const rows=cmFilteredRows().map(r=>{const o={};cols.forEach(c=>{let v=r[c.key];if(c.type==='date')v=fmtD(v)||'';o[c.label]=(v==null?'':v);});return o;});
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows,{header:cols.map(c=>c.label)}),'Claims Master');
   XLSX.writeFile(wb,'Claims_Master_'+new Date().toISOString().slice(0,10)+'.xlsx');
 };
 $('cm-prev').onclick=()=>{if(cmPage>1){cmPage--;renderClaims();}};

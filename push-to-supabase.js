@@ -78,11 +78,12 @@ async function main() {
   // then upsert - simplest correct approach for a full push.
   await chunkedUpsert(supabase, 'claim_workflow', workflow, 'case_no,row_index');
 
-  // sync_runs (optional history mirror)
-  const runs = db.prepare('SELECT started_at, finished_at, status, from_dt, to_dt, total_found, deep_scraped, message FROM sync_runs ORDER BY id DESC LIMIT 50').all();
+  // sync_runs history mirror: replace with the last 200 runs so it stays clean (no duplicates)
+  const runs = db.prepare('SELECT started_at, finished_at, status, from_dt, to_dt, total_found, deep_scraped, message FROM sync_runs ORDER BY id DESC LIMIT 200').all();
   if (runs.length) {
-    const { error } = await supabase.from('sync_runs').insert(runs).select().limit(0);
-    if (error && !/duplicate/i.test(error.message)) console.log('  (sync_runs mirror skipped:', error.message, ')');
+    await supabase.from('sync_runs').delete().gte('id', 0);
+    const { error } = await supabase.from('sync_runs').insert(runs);
+    if (error) console.log('  (sync_runs mirror skipped:', error.message, ')');
   }
 
   console.log('Done. Supabase is up to date.');
