@@ -380,15 +380,28 @@ async function runSync(opts = {}) {
   let totalFound = 0;
   let deepScraped = 0;
 
-  const browser = await chromium.launch({ channel: 'chrome', headless });
-  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-  context.on('page', (p) => attachDialogHandler(p, log));
+  let browser = null, page = null;
+  async function fresh() {
+    if (browser) await Promise.race([browser.close().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]);
+    browser = await chromium.launch({ channel: 'chrome', headless });
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    ctx.on('page', (p) => attachDialogHandler(p, log));
+    page = await login(ctx, log);
+  }
+  async function freshResilient() {
+    for (let a = 1; a <= 6; a++) {
+      try { await fresh(); return; } catch (e) { log(`  [re-login attempt ${a}/6 failed: ${(e && e.message) || e}]`); await new Promise((r) => setTimeout(r, a * 5000)); }
+    }
+    throw new Error('re-login failed after 6 attempts');
+  }
+  // (re)open the search results list for the window; used after a fresh login or a closed page
+  async function reopenSearch() { await gotoCasesSearch(page, log); await setStatusDateRange(page, fromStr, toStr, log); await runSearch(page, log); }
+  // recover mid-loop: try to re-open the search; if the session/browser died, re-login first
+  async function recoverSearch() { try { await reopenSearch(); } catch (e) { log('  [session lost - re-logging in]'); await freshResilient(); await reopenSearch().catch(() => {}); } }
 
   try {
-    const page = await login(context, log);
-    await gotoCasesSearch(page, log);
-    await setStatusDateRange(page, fromStr, toStr, log);
-    await runSearch(page, log);
+    await freshResilient();
+    await reopenSearch();
 
     const list = await scrapeResultsList(page);
     totalFound = list.length;
@@ -409,15 +422,14 @@ async function runSync(opts = {}) {
     const toVisit = list.slice(0, limit === Infinity ? list.length : limit);
     for (let i = 0; i < toVisit.length; i++) {
       const c = toVisit[i];
+      if (i > 0 && i % 25 === 0) { log('  [proactive re-login after 25 cases]'); try { await freshResilient(); await reopenSearch(); } catch (e) {} }
       log(`[${i + 1}/${toVisit.length}] Case ${c.case_no}...`);
       try {
         const opened = await openCaseByText(page, c.case_no);
         if (!opened) {
           // page never loaded - do NOT mark deep_synced, so the next run retries it
           log('  case page did not load - skipping (will retry next run)');
-          await gotoCasesSearch(page, log);
-          await setStatusDateRange(page, fromStr, toStr, log);
-          await runSearch(page, log);
+          await recoverSearch();
           continue;
         }
         const details = await scrapeCaseDetails(page);
@@ -439,10 +451,8 @@ async function runSync(opts = {}) {
         deepScraped++;
         log(`  saved (${wf.rows.length} workflow rows)${wf.note ? ' - ' + wf.note : ''}`);
       } catch (caseErr) {
-        log(`  ERROR on ${c.case_no}: ${caseErr.message} - re-opening search and continuing`);
-        await gotoCasesSearch(page, log);
-        await setStatusDateRange(page, fromStr, toStr, log);
-        await runSearch(page, log);
+        log(`  ERROR on ${c.case_no}: ${caseErr.message} - recovering`);
+        await recoverSearch();
         continue;
       }
 
@@ -460,9 +470,7 @@ async function runSync(opts = {}) {
           /Results\s+\d+\s*-\s*\d+\s+of\s+\d+/i.test(document.body ? document.body.textContent : '')).catch(() => false);
         if (hasList) continue;
       }
-      await gotoCasesSearch(page, log);
-      await setStatusDateRange(page, fromStr, toStr, log);
-      await runSearch(page, log);
+      await recoverSearch();
     }
 
     finishRun(runId, 'success', totalFound, deepScraped, '');
@@ -472,7 +480,7 @@ async function runSync(opts = {}) {
     finishRun(runId, 'failed', totalFound, deepScraped, err.message);
     throw err;
   } finally {
-    await browser.close();
+    if (browser) await browser.close().catch(() => {});
   }
 }
 
