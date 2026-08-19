@@ -62,6 +62,16 @@ async function main() {
     cases = db.prepare('SELECT * FROM cases').all();
     workflow = db.prepare('SELECT case_no, row_index, date_time, role_name, remarks, action, amount FROM claim_workflow').all();
   }
+  // sync_runs mirror: keep ONLY today's runs (Sync History shows just today). Runs on EVERY
+  // push — even "nothing new" or a failed scrape — so failures always get recorded.
+  try {
+    const allRuns = db.prepare('SELECT started_at, finished_at, status, from_dt, to_dt, total_found, deep_scraped, message FROM sync_runs ORDER BY id DESC LIMIT 200').all();
+    const today = new Date().toDateString();
+    const runs = allRuns.filter((r) => { const d = new Date(r.started_at); return !isNaN(d.getTime()) && d.toDateString() === today; });
+    await supabase.from('sync_runs').delete().gte('id', 0);
+    if (runs.length) { const { error } = await supabase.from('sync_runs').insert(runs); if (error) console.log('  (sync_runs mirror skipped:', error.message, ')'); }
+  } catch (e) { console.log('  (sync_runs mirror error:', e.message, ')'); }
+
   if (!cases.length) { console.log('Nothing new to push.'); return; }
 
   // merge precomputed summary columns into each case from its workflow rows
@@ -77,14 +87,6 @@ async function main() {
   // claim_workflow: unique (case_no, row_index). Replace all rows for the cases we have,
   // then upsert - simplest correct approach for a full push.
   await chunkedUpsert(supabase, 'claim_workflow', workflow, 'case_no,row_index');
-
-  // sync_runs history mirror: replace with the last 200 runs so it stays clean (no duplicates)
-  const runs = db.prepare('SELECT started_at, finished_at, status, from_dt, to_dt, total_found, deep_scraped, message FROM sync_runs ORDER BY id DESC LIMIT 200').all();
-  if (runs.length) {
-    await supabase.from('sync_runs').delete().gte('id', 0);
-    const { error } = await supabase.from('sync_runs').insert(runs);
-    if (error) console.log('  (sync_runs mirror skipped:', error.message, ')');
-  }
 
   console.log('Done. Supabase is up to date.');
 }
