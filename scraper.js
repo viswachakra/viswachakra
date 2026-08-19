@@ -401,9 +401,18 @@ async function runSync(opts = {}) {
 
   try {
     await freshResilient();
-    await reopenSearch();
-
-    const list = await scrapeResultsList(page);
+    let list = [];
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await reopenSearch();
+        list = await scrapeResultsList(page);
+        break;
+      } catch (e) {
+        log(`  [initial search attempt ${attempt}/3 failed: ${(e && e.message) || e}]`);
+        if (attempt === 3) throw e;
+        await freshResilient();
+      }
+    }
     totalFound = list.length;
     log(`Result list: ${list.length} cases.`);
 
@@ -450,27 +459,27 @@ async function runSync(opts = {}) {
         if (wf.rows.length) replaceWorkflowForCase(c.case_no, wf.rows);
         deepScraped++;
         log(`  saved (${wf.rows.length} workflow rows)${wf.note ? ' - ' + wf.note : ''}`);
+
+        // back to the results list
+        const backOk = await page.evaluate(() => {
+          const isVisible = (el) => !!(el.offsetWidth || el.offsetHeight);
+          const el = Array.from(document.querySelectorAll('input, button, a'))
+            .find((e) => ((e.value || e.textContent || '').trim() === 'Back') && isVisible(e));
+          if (el) { el.click(); return true; }
+          return false;
+        }).catch(() => false);
+        if (backOk) {
+          await page.waitForTimeout(3000).catch(() => {});
+          const hasList = await page.evaluate(() =>
+            /Results\s+\d+\s*-\s*\d+\s+of\s+\d+/i.test(document.body ? document.body.textContent : '')).catch(() => false);
+          if (hasList) continue;
+        }
+        await recoverSearch();
       } catch (caseErr) {
         log(`  ERROR on ${c.case_no}: ${caseErr.message} - recovering`);
         await recoverSearch();
         continue;
       }
-
-      // back to the results list
-      const backOk = await page.evaluate(() => {
-        const isVisible = (el) => !!(el.offsetWidth || el.offsetHeight);
-        const el = Array.from(document.querySelectorAll('input, button, a'))
-          .find((e) => ((e.value || e.textContent || '').trim() === 'Back') && isVisible(e));
-        if (el) { el.click(); return true; }
-        return false;
-      }).catch(() => false);
-      if (backOk) {
-        await page.waitForTimeout(3000);
-        const hasList = await page.evaluate(() =>
-          /Results\s+\d+\s*-\s*\d+\s+of\s+\d+/i.test(document.body ? document.body.textContent : '')).catch(() => false);
-        if (hasList) continue;
-      }
-      await recoverSearch();
     }
 
     finishRun(runId, 'success', totalFound, deepScraped, '');
