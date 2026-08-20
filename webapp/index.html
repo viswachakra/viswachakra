@@ -459,7 +459,13 @@ sb.auth.onAuthStateChange(async (ev)=>{
   }
 });
 $('logout-btn').addEventListener('click',async()=>{await sb.auth.signOut();location.reload();});
-function showApp(){$('login').style.display='none';$('app').style.display='block';init();}
+let isAdmin=false;
+async function showApp(){
+  $('login').style.display='none';$('app').style.display='block';
+  try{const {data}=await sb.auth.getUser();isAdmin=((data.user&&data.user.email)||'').trim().toLowerCase()==='admin@vvistech.com';}catch(e){isAdmin=false;}
+  if(!isAdmin)$('nav-dash').style.display='none';   // only admin@vvistech.com sees the Dashboard
+  init();
+}
 
 // ---- nav ----
 function setupNav(){
@@ -469,6 +475,7 @@ function setupNav(){
   $('nav-sync').onclick=()=>switchView('sync');
 }
 function switchView(v){
+  if(v==='dash'&&!isAdmin)v='cases';   // non-admins never see the Dashboard
   ['dash','cases','claims','sync'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
   if(v==='dash')resizeCharts();
   if(v==='cases')loadCases();
@@ -516,9 +523,10 @@ function setupDashTabs(){
 let started=false;
 async function init(){
   if(started)return;started=true;
-  setupNav();setupDashTabs();
-  loadDashboard();                       // default landing view
-  loadStats();                           // KPI cards + last-sync pill (fast head counts)
+  setupNav();
+  loadStats();                           // Cases-tab KPI cards + last-sync pill (fast head counts)
+  if(isAdmin){ setupDashTabs(); loadDashboard(); }   // admin lands on the Dashboard
+  else { switchView('cases'); }                       // everyone else starts on Cases (no Dashboard)
 }
 
 // ---- helpers for analytics ----
