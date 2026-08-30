@@ -216,6 +216,7 @@
       <button id="nav-cases">Cases</button>
       <button id="nav-claims">Claims Master</button>
       <button id="nav-sync">Sync History</button>
+      <button id="nav-settings">Settings</button>
     </nav>
     <div class="hright">
       <span class="pill" id="sync-pill">–</span>
@@ -404,6 +405,26 @@
     </div>
   </main>
 
+  <main id="view-settings" style="display:none">
+    <div class="card" style="max-width:580px;padding:26px;overflow:visible">
+      <h2 style="margin:0 0 6px;font-size:19px">Portal password</h2>
+      <p style="font-size:13px;color:var(--text-2);line-height:1.55;margin:0 0 18px">
+        The Dr NTR Vaidya Seva portal periodically forces a password reset. When that happens the hourly sync starts failing with <b>“Invalid User Id or Password”</b>. Reset it on the portal, then enter the new password here — the scraper picks it up on its next run. No file editing needed.
+      </p>
+      <div id="set-status" style="font-size:12.5px;color:var(--text-3);margin-bottom:18px">—</div>
+      <label style="display:block;font-size:12.5px;font-weight:600;color:var(--text-2);margin-bottom:6px">New portal password</label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+        <input id="set-pw" type="password" autocomplete="new-password" placeholder="Enter the new portal password" style="flex:1;padding:11px 13px;border:1px solid var(--border-strong);border-radius:9px;font-size:14px;font-family:inherit;background:var(--card);color:var(--text)">
+        <button class="btn ghost" id="set-toggle" type="button" style="flex:0 0 auto;padding:11px 14px">Show</button>
+      </div>
+      <button class="btn" id="set-save" type="button">Update password</button>
+      <div id="set-msg" style="font-size:13px;margin-top:14px;display:none;line-height:1.5"></div>
+      <p style="font-size:11.5px;color:var(--text-3);line-height:1.55;margin:22px 0 0;border-top:1px solid var(--border);padding-top:14px">
+        Log into the portal in a browser first to confirm the new password works, then set it here. It's stored write-only (this page can never read it back) and the scraper syncs it into its local <code>.env</code> on the next run.
+      </p>
+    </div>
+  </main>
+
 </div>
 
 <div id="overlay"></div>
@@ -463,7 +484,7 @@ let isAdmin=false;
 async function showApp(){
   $('login').style.display='none';$('app').style.display='block';
   try{const {data}=await sb.auth.getUser();isAdmin=((data.user&&data.user.email)||'').trim().toLowerCase()==='admin@vvistech.com';}catch(e){isAdmin=false;}
-  if(!isAdmin)$('nav-dash').style.display='none';   // only admin@vvistech.com sees the Dashboard
+  if(!isAdmin){$('nav-dash').style.display='none';$('nav-settings').style.display='none';}   // only admin@vvistech.com sees Dashboard + Settings
   init();
 }
 
@@ -473,14 +494,56 @@ function setupNav(){
   $('nav-cases').onclick=()=>switchView('cases');
   $('nav-claims').onclick=()=>switchView('claims');
   $('nav-sync').onclick=()=>switchView('sync');
+  $('nav-settings').onclick=()=>switchView('settings');
 }
 function switchView(v){
-  if(v==='dash'&&!isAdmin)v='cases';   // non-admins never see the Dashboard
-  ['dash','cases','claims','sync'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
+  if((v==='dash'||v==='settings')&&!isAdmin)v='cases';   // non-admins never see Dashboard or Settings
+  ['dash','cases','claims','sync','settings'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
   if(v==='dash')resizeCharts();
   if(v==='cases')loadCases();
   if(v==='claims')loadClaims();
   if(v==='sync')loadSync();
+  if(v==='settings'){wireSettings();loadSettings();}
+}
+
+// ---- settings (admin-only): update the portal password without touching .env ----
+async function loadSettings(){
+  const st=$('set-status');if(!st)return;
+  try{
+    const {data}=await sb.from('app_settings').select('value,updated_at').eq('key','vaidya_password_meta').maybeSingle();
+    if(data&&data.updated_at){
+      const d=new Date(data.updated_at);
+      st.innerHTML='Portal password last updated <b>'+esc(d.toLocaleString('en-IN'))+'</b>'+(data.value?(' by '+esc(data.value)):'');
+    }else{
+      st.textContent='The portal password has not been updated from here yet.';
+    }
+  }catch(e){ st.textContent=''; }
+}
+function wireSettings(){
+  const pw=$('set-pw'),tog=$('set-toggle'),save=$('set-save'),msg=$('set-msg');
+  if(!save||save._wired)return; save._wired=true;
+  tog.onclick=()=>{const show=pw.type==='password';pw.type=show?'text':'password';tog.textContent=show?'Hide':'Show';pw.focus();};
+  pw.addEventListener('keydown',e=>{if(e.key==='Enter')save.click();});
+  save.onclick=async()=>{
+    const val=pw.value.trim();
+    msg.style.display='block';
+    if(!val){msg.style.color='var(--red-fg)';msg.textContent='Enter the new password first.';return;}
+    save.disabled=true;const label=save.textContent;save.textContent='Saving…';
+    try{
+      const email=(((await sb.auth.getUser()).data.user)||{}).email||'';
+      const now=new Date().toISOString();
+      const {error}=await sb.from('app_settings').upsert([
+        {key:'vaidya_password',value:val,updated_by:email,updated_at:now},
+        {key:'vaidya_password_meta',value:email,updated_by:email,updated_at:now},
+      ],{onConflict:'key'});
+      if(error)throw error;
+      pw.value='';pw.type='password';tog.textContent='Show';
+      msg.style.color='var(--green-fg)';msg.textContent='✓ Password saved. The scraper will use it on the next hourly run (and sync it into .env).';
+      loadSettings();
+    }catch(e){
+      msg.style.color='var(--red-fg)';msg.textContent='Could not save: '+(e.message||e);
+    }finally{ save.disabled=false;save.textContent=label; }
+  };
 }
 
 // ---- shared client-side dataset: precomputed per-case claimed / paid / comment ----

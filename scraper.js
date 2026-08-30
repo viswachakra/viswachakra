@@ -31,16 +31,60 @@ function attachDialogHandler(page, log) {
   });
 }
 
+// Update a single KEY=value line in the local .env (keeps it current when the password
+// is changed from the web UI). Uses a function replacement so '$' in the value is literal.
+function updateEnvValue(key, value) {
+  try {
+    const envPath = path.join(__dirname, '.env');
+    let txt = fs.readFileSync(envPath, 'utf8');
+    const re = new RegExp('^' + key + '=.*$', 'm');
+    if (re.test(txt)) txt = txt.replace(re, () => key + '=' + value);
+    else txt += (txt.endsWith('\n') ? '' : '\n') + key + '=' + value + '\n';
+    fs.writeFileSync(envPath, txt);
+    return true;
+  } catch (e) { return false; }
+}
+
+// Resolve portal credentials, preferring the password set from the web UI (Supabase
+// app_settings, read with the service key which bypasses RLS) and falling back to .env.
+// When the web-UI password differs from .env it is written back, so the file stays current
+// even if Supabase is unreachable on a later run.
+async function resolveCredentials(log) {
+  let user = process.env.VAIDYA_USERNAME;
+  let pass = process.env.VAIDYA_PASSWORD;
+  try {
+    if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
+      const { createClient } = require('@supabase/supabase-js');
+      const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+      const { data, error } = await sb.from('app_settings')
+        .select('key,value').in('key', ['vaidya_password', 'vaidya_username']);
+      if (!error && data) {
+        const map = Object.fromEntries(data.map((r) => [r.key, r.value]));
+        if (map.vaidya_username) user = map.vaidya_username;
+        if (map.vaidya_password) {
+          if (map.vaidya_password !== pass) {
+            log('Portal password from web UI differs from .env - using it and updating .env.');
+            if (updateEnvValue('VAIDYA_PASSWORD', map.vaidya_password)) log('  .env VAIDYA_PASSWORD synced.');
+          }
+          pass = map.vaidya_password;
+        }
+      }
+    }
+  } catch (e) {
+    log('Could not read password from Supabase (using .env): ' + ((e && e.message) || e));
+  }
+  return { user, pass };
+}
+
 async function login(context, log) {
   const page = await context.newPage();
   attachDialogHandler(page, log);
   log('Opening login page...');
   await page.goto(process.env.LOGIN_URL || BASE + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-  const user = process.env.VAIDYA_USERNAME;
-  const pass = process.env.VAIDYA_PASSWORD;
+  const { user, pass } = await resolveCredentials(log);
   if (!user || !pass || pass === 'PUT_YOUR_PASSWORD_HERE') {
-    throw new Error('Set VAIDYA_USERNAME and VAIDYA_PASSWORD in the .env file first.');
+    throw new Error('Set VAIDYA_USERNAME and VAIDYA_PASSWORD (in the web UI Settings tab, or .env) first.');
   }
 
   await page.locator('input[type="text"]:visible').first().fill(user);
