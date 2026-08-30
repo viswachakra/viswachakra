@@ -484,7 +484,7 @@ let isAdmin=false;
 async function showApp(){
   $('login').style.display='none';$('app').style.display='block';
   try{const {data}=await sb.auth.getUser();isAdmin=((data.user&&data.user.email)||'').trim().toLowerCase()==='admin@vvistech.com';}catch(e){isAdmin=false;}
-  if(!isAdmin){$('nav-dash').style.display='none';$('nav-settings').style.display='none';}   // only admin@vvistech.com sees Dashboard + Settings
+  if(!isAdmin)$('nav-dash').style.display='none';   // only admin@vvistech.com sees the Dashboard (Settings is open to all)
   init();
 }
 
@@ -497,7 +497,7 @@ function setupNav(){
   $('nav-settings').onclick=()=>switchView('settings');
 }
 function switchView(v){
-  if((v==='dash'||v==='settings')&&!isAdmin)v='cases';   // non-admins never see Dashboard or Settings
+  if(v==='dash'&&!isAdmin)v='cases';   // non-admins never see the Dashboard (Settings is open to all)
   ['dash','cases','claims','sync','settings'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
   if(v==='dash')resizeCharts();
   if(v==='cases')loadCases();
