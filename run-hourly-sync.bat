@@ -12,11 +12,11 @@ REM Either would wipe the settlement backfill. Keep this confined to fresh scrap
 REM
 REM Registered with Windows Task Scheduler as "ViswachakraHourlySync" to run every hour.
 
+REM The real work lives in run-hourly-sync.ps1, which puts a hard deadline on
+REM each step. A stalled run used to hang until the next hourly task killed it
+REM (49 of 277 runs never finished). This file stays as the entry point so the
+REM existing "ViswachakraHourlySync" task needs no reconfiguring.
+REM
 REM Run from this script's own folder, so the same file works on any machine.
 cd /d "%~dp0"
-if not exist "logs" mkdir "logs"
-set HEADLESS=true
-echo ===== sync started %date% %time% ===== >> "logs\hourly-sync.log"
-node scraper.js --hours 2 --headless >> "logs\hourly-sync.log" 2>&1
-node push-to-supabase.js --since-minutes 130 >> "logs\hourly-sync.log" 2>&1
-echo ===== sync finished %date% %time% ===== >> "logs\hourly-sync.log"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-hourly-sync.ps1"
