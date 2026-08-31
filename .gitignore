@@ -15,3 +15,6 @@ debug/
 portal-pages/
 logs/
 _*.js
+
+# generated one-off case lists (rescrape-broken-amounts.js derives its own)
+rescrape-targets.json
