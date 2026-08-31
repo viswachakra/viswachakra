@@ -23,6 +23,14 @@ cd viswachakra
 npm install
 ```
 
+The folder can live anywhere — `run-hourly-sync.bat` and `run-refresh.ps1`
+locate themselves, so no paths need editing. Note the full path you chose;
+Step 5 needs it.
+
+You do NOT need `npx playwright install`. The scraper launches the real
+installed Google Chrome (`chromium.launch({ channel: 'chrome' })`), so
+installing Chrome from Step 0 is enough.
+
 ## Step 2 — Create the .env file
 
 In the `viswachakra` folder, create a file named `.env` (exactly that, no .txt)
@@ -41,17 +49,26 @@ SUPABASE_SERVICE_KEY=<the sb_secret_... key from the old machine's .env>
 
 The portal allows only ONE session per account. Do NOT run the scraper on two
 machines at once. On the old (Hyderabad) machine, close any backfill window and
-delete/disable its "Viswachakra Sync" scheduled task.
+delete/disable its scheduled task. Check BOTH names — older installs registered
+it as "Viswachakra Sync", the current one is "ViswachakraHourlySync":
+```
+schtasks /query /tn "ViswachakraHourlySync"
+schtasks /change /tn "ViswachakraHourlySync" /disable
+```
 
 ## Step 4 — Catch up the history (one-time)
 
 The database already has data up to ~May 2023 backward. To fill the rest and
 refresh, run:
 ```
-node backfill.js --start "01/01/2023 00:00"
+node scraper.js --from "01/01/2023 00:00" --headless
 ```
 It resumes safely (already-scraped cases are updated, not duplicated) and pushes
 to Supabase after each chunk. Keep the window open; keep the machine awake.
+
+There is no separate `backfill.js` any more — it was folded into `scraper.js` in
+commit 80c1214. Date format is DD/MM/YYYY HH:mm. Add `--to "..."` to cap the
+range, or `--limit all` to lift the row cap.
 
 ## Step 5 — Turn on the automatic hourly sync (the permanent fix)
 

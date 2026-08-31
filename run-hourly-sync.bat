@@ -12,7 +12,9 @@ REM Either would wipe the settlement backfill. Keep this confined to fresh scrap
 REM
 REM Registered with Windows Task Scheduler as "ViswachakraHourlySync" to run every hour.
 
-cd /d "C:\Users\bhanu\Downloads\viswachakra"
+REM Run from this script's own folder, so the same file works on any machine.
+cd /d "%~dp0"
+if not exist "logs" mkdir "logs"
 set HEADLESS=true
 echo ===== sync started %date% %time% ===== >> "logs\hourly-sync.log"
 node scraper.js --hours 2 --headless >> "logs\hourly-sync.log" 2>&1

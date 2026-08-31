@@ -8,8 +8,9 @@ param(
   [int]$StaleMin = 6,
   [int]$MaxAttempts = 80
 )
-$root = "C:\Users\bhanu\Downloads\viswachakra"
+$root = $PSScriptRoot
 Set-Location $root
+if (-not (Test-Path (Join-Path $root 'logs'))) { New-Item -ItemType Directory -Path (Join-Path $root 'logs') | Out-Null }
 $df = Join-Path $root $DoneFile
 
 for ($a = 1; $a -le $MaxAttempts; $a++) {
