@@ -30,10 +30,16 @@ create table if not exists cases (
   settlement_days     integer,
   deduction           integer,
   is_paid             boolean default false,
+  -- amount on the LAST "Recommended for Approval" row. Lets the app flag a claim
+  -- approved below the amount raised months before the money actually lands.
+  approved_amount     integer,
   latest_comment      text,
   latest_comment_by   text,
   latest_comment_date text
 );
+
+-- Migration for databases created before approved_amount existed.
+alter table cases add column if not exists approved_amount integer;
 
 create table if not exists claim_workflow (
   id        bigint generated always as identity primary key,
