@@ -530,12 +530,9 @@ function wireSettings(){
     if(!val){msg.style.color='var(--red-fg)';msg.textContent='Enter the new password first.';return;}
     save.disabled=true;const label=save.textContent;save.textContent='Saving…';
     try{
-      const email=(((await sb.auth.getUser()).data.user)||{}).email||'';
-      const now=new Date().toISOString();
-      const {error}=await sb.from('app_settings').upsert([
-        {key:'vaidya_password',value:val,updated_by:email,updated_at:now},
-        {key:'vaidya_password_meta',value:email,updated_by:email,updated_at:now},
-      ],{onConflict:'key'});
+      // Writes via a SECURITY DEFINER function so the browser never touches the table
+      // directly and can never read the password back (see supabase-app-settings.sql).
+      const {error}=await sb.rpc('set_portal_password',{new_password:val});
       if(error)throw error;
       pw.value='';pw.type='password';tog.textContent='Show';
       msg.style.color='var(--green-fg)';msg.textContent='✓ Password saved. The scraper will use it on the next hourly run (and sync it into .env).';

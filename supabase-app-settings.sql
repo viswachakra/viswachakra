@@ -34,3 +34,36 @@ drop policy if exists "update settings" on public.app_settings;
 create policy "update settings" on public.app_settings
   for update to authenticated
   using (true) with check (true);
+
+-- The web app writes the password through THIS function, not by inserting into the table
+-- directly. It runs as the function owner (security definer) so it bypasses the table RLS
+-- and can write the secret row -- while the browser still can never SELECT it back. This
+-- also avoids the "write-only row can't be returned" RLS error on a direct insert.
+create or replace function public.set_portal_password(new_password text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  who text := coalesce(auth.jwt() ->> 'email', '');
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+  insert into public.app_settings (key, value, updated_at, updated_by)
+    values ('vaidya_password', new_password, now(), who)
+    on conflict (key) do update set value = excluded.value, updated_at = now(), updated_by = who;
+  insert into public.app_settings (key, value, updated_at, updated_by)
+    values ('vaidya_password_meta', who, now(), who)
+    on conflict (key) do update set value = excluded.value, updated_at = now(), updated_by = who;
+end;
+$$;
+
+-- Only logged-in users may call it.
+revoke all on function public.set_portal_password(text) from public, anon;
+grant execute on function public.set_portal_password(text) to authenticated;
+
+-- Force PostgREST to reload its schema + policy cache (otherwise a table created
+-- moments earlier can keep enforcing "deny all" until the next reload).
+notify pgrst, 'reload schema';
