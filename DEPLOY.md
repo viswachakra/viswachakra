@@ -41,7 +41,7 @@ machine's `.env` if it was changed since:
 LOGIN_URL=https://app.drntrvaidyaseva.ap.gov.in/ASRI/
 VAIDYA_USERNAME=medco1_vcoh_mtm
 VAIDYA_PASSWORD=<the current portal password>
-SUPABASE_URL=https://hhshbogxymuscjtpwgpm.supabase.co
+SUPABASE_URL=https://lxeuvxkhieszizdclivg.supabase.co
 SUPABASE_SERVICE_KEY=<the sb_secret_... key from the old machine's .env>
 ```
 
