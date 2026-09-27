@@ -18,7 +18,7 @@ database (Supabase) are already in the cloud and do NOT move.
 Open a Command Prompt and run:
 ```
 cd %USERPROFILE%\Downloads
-git clone https://github.com/VVISTECH-git/viswachakra.git
+git clone https://github.com/viswachakra/viswachakra.git
 cd viswachakra
 npm install
 ```
