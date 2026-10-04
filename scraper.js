@@ -788,7 +788,14 @@ async function scrapeCaseWorkflows(caseNos, opts = {}) {
   return out;
 }
 
-module.exports = { runSync, rescrapeCases, fmt, countRanges, listRanges, scrapeCaseWorkflows };
+module.exports = {
+  runSync, rescrapeCases, fmt, countRanges, listRanges, scrapeCaseWorkflows,
+  // Lower-level steps, so a read-only audit can walk the portal itself without
+  // going through runSync (which writes to SQLite). Used by
+  // verify-against-portal.js.
+  login, searchCaseByNo, openCaseByText, scrapeCaseDetails, scrapeClaimWorkflow,
+  gotoCasesSearch, setStatusDateRange, runSearch, scrapeResultsList,
+};
 
 if (require.main === module) {
   const limitArg = arg('limit', '');
