@@ -103,4 +103,11 @@ async function main() {
   console.log('Done. Supabase is up to date.');
 }
 
-main().catch((e) => { console.error('Push failed:', e.message); process.exit(1); });
+// Exported so other push scripts derive amounts with EXACTLY this logic rather
+// than reimplementing it - a second, drifting copy of computeSummary is how
+// claimed_amount got corrupted before.
+module.exports = { computeSummary, chunkedUpsert, parseAmt, parseWfDate };
+
+if (require.main === module) {
+  main().catch((e) => { console.error('Push failed:', e.message); process.exit(1); });
+}
