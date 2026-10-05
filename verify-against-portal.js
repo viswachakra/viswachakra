@@ -66,17 +66,12 @@ async function main() {
   });
 
   // ---- what Supabase believes -------------------------------------------
-  const page_ = async (table, cols) => {
-    let from = 0; const out = [];
-    for (;;) {
-      const { data, error } = await supabase.from(table).select(cols).range(from, from + 999);
-      if (error) throw new Error(`${table}: ${error.message}`);
-      out.push(...data);
-      if (data.length < 1000) break;
-      from += 1000;
-    }
-    return out;
-  };
+  // pageAllChecked asserts the row count matches the server's own count. An
+  // unordered .range() scan silently returned 4,160 of 4,831 cases on
+  // 2026-10-04; an audit that skips records while reporting "all verified" is
+  // worse than no audit at all.
+  const { pageAllChecked } = require('./supabase-page');
+  const page_ = (table, cols) => pageAllChecked(supabase, table, cols);
   console.log('Reading Supabase...');
   const cases = await page_('cases',
     'case_no,patient_name,case_status,claim_status,claim_no,card_no,district,mandal,village,' +
