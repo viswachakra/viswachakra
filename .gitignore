@@ -24,3 +24,16 @@ portal-audit.json
 portal-completeness.json
 listfields-progress.json
 missing-cases.json
+
+# one-off working files from the Oct 2026 reconciliation
+all-cases.json
+recheck-cases.json
+suspect-cases.json
+supabase-extra.json
+backup-extras.json
+xlsx-all-cases.json
+xlsx-all-rows.json
+xlsx-missing.json
+xlsx-cases.json
+repair-progress.json
+_*.json

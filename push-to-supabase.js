@@ -91,6 +91,35 @@ async function main() {
   workflow.forEach((w) => { (byCase[w.case_no] = byCase[w.case_no] || []).push(w); });
   for (const c of cases) Object.assign(c, computeSummary(byCase[c.case_no] || []));
 
+  // Never overwrite a populated Supabase value with a blank local one.
+  //
+  // The list fields below come from the portal's SEARCH RESULTS page, which
+  // rescrapeCases() does not read - its docstring says it "does not touch list
+  // fields" - so a workflow-only re-scrape leaves them empty in local SQLite.
+  // Upserting the whole local row then wiped names and statuses that had been
+  // repaired directly in Supabase: 94 cases lost patient_name and claim_status
+  // that way on 2026-10-05..07, including 55 paid claims worth ₹14.4 lakh.
+  //
+  // Omitting a key from the payload leaves that column untouched on conflict,
+  // so blank list fields are simply dropped. Derived money columns are NOT
+  // stripped - a null deduction or paid_amount is meaningful.
+  const LIST_FIELDS = [
+    'claim_no', 'patient_name', 'card_no', 'claim_status', 'source_registration',
+    'status_date', 'ip_registration_dt', 'district', 'mandal', 'village',
+    'contact_no', 'nwh_name', 'nwh_type', 'ip_no', 'category', 'procedure_name',
+    'case_status',
+  ];
+  let stripped = 0;
+  for (const c of cases) {
+    for (const f of LIST_FIELDS) {
+      if (f in c && (c[f] === null || c[f] === undefined || String(c[f]).trim() === '')) {
+        delete c[f];
+        stripped++;
+      }
+    }
+  }
+  if (stripped) console.log(`  (left ${stripped} blank field(s) alone rather than blanking Supabase)`);
+
   console.log(`Pushing ${cases.length} cases and ${workflow.length} workflow rows to Supabase...`);
 
   // cases: primary key case_no
