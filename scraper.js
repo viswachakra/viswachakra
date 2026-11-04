@@ -164,7 +164,34 @@ async function login(context, log) {
   }
   attachDialogHandler(dash, log);
   log('Logged in OK.');
+  await captureNotesPopup(context, log).catch((e) => log('  (popup capture failed: ' + e.message + ')'));
   return dash;
+}
+
+// The portal greets every login with "Cases for which Clinical Notes is not
+// Updated today" plus the case numbers. That list is the authority for the
+// doctor's item 9, so it is captured on every login and stored in Supabase
+// app_settings (key notes_missing_today) for the apps to read.
+async function captureNotesPopup(context, log) {
+  let found = null;
+  for (let attempt = 0; attempt < 4 && !found; attempt++) {
+    for (const p of context.pages()) {
+      const body = (await p.textContent('body').catch(() => '')) || '';
+      const m = body.match(/There are\s+(\d+)\s+cases?\s+for which the Clinical Notes is not updated:?\s*((?:AP\d+[\s|]*)+)/i);
+      if (m) { found = { count: parseInt(m[1], 10), cases: m[2].match(/AP\d+/g) || [] }; break; }
+      if (/Clinical Notes is not Updated today/i.test(body) && /There are 0 cases/i.test(body)) { found = { count: 0, cases: [] }; break; }
+    }
+    if (!found) await new Promise((r) => setTimeout(r, 2000));
+  }
+  if (!found) { log('  (clinical-notes popup not seen this login)'); return; }
+  log('  clinical-notes popup: ' + found.count + ' case(s) without today\'s note');
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return;
+  const { createClient } = require('@supabase/supabase-js');
+  const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  const value = JSON.stringify({ at: new Date().toISOString(), count: found.count, cases: found.cases });
+  const { error } = await sb.from('app_settings').upsert(
+    { key: 'notes_missing_today', value, updated_at: new Date().toISOString(), updated_by: 'scraper' }, { onConflict: 'key' });
+  if (error) log('  (could not store popup list: ' + error.message + ')');
 }
 
 async function gotoCasesSearch(page, log) {
