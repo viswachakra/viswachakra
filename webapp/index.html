@@ -57,7 +57,7 @@
   .pill{font-size:12px;color:var(--text-2);background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:5px 12px}
   main{max-width:1280px;margin:0 auto;padding:22px 24px 60px}
   /* all pages use the full browser width */
-  #view-dash,#view-cases,#view-claims,#view-sync{max-width:none}
+  #view-cases,#view-claims,#view-sync{max-width:none}
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:18px}
   .kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
   .kpi .l{font-size:11.5px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
@@ -245,7 +245,6 @@
     <div class="logo"><div class="mark">VC</div><div>Viswachakra Claims<small>Dr NTR Vaidya Seva · VCOH-MTM</small></div></div>
     <nav class="nav">
       <button id="nav-alerts">Alerts <span id="alerts-badge" class="badge" style="display:none">0</span></button>
-      <button id="nav-dash" class="on">Dashboard</button>
       <button id="nav-cases">Cases</button>
       <button id="nav-claims">Claims Master</button>
       <button id="nav-sync">Sync History</button>
@@ -266,100 +265,6 @@
       <!-- the tiles ARE the navigation: one list shows at a time underneath -->
       <div class="al-kpis" id="al-kpis"></div>
       <div id="al-detail"></div>
-    </div>
-  </main>
-
-  <main id="view-dash">
-    <div id="dash-loading" class="empty" style="padding:60px">Crunching the numbers…</div>
-    <div id="dash-content" style="display:none">
-      <div class="toolbar" style="margin-bottom:14px">
-        <label style="font-size:12.5px;color:var(--text-2);font-weight:600;display:flex;align-items:center;gap:7px">Period
-          <select id="dash-period" style="padding:8px 12px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;font-family:inherit;background:var(--card);color:var(--text)">
-            <option value="all" selected>All time</option>
-            <option value="12m">Last 12 months</option>
-            <option value="6m">Last 6 months</option>
-            <option value="fy">This financial year</option>
-            <option value="lfy">Last financial year</option>
-          </select>
-        </label>
-        <span style="font-size:11.5px;color:var(--text-3)">filtered by IP registration date</span>
-      </div>
-      <div class="hero">
-        <div class="hero-row">
-          <div class="hero-left">
-            <div class="hero-main"><span class="hero-num" id="h-days">–</span><span class="hero-unit">days to get paid</span></div>
-            <div class="hero-sub" id="h-sub">average wait from claim submission to payment</div>
-          </div>
-          <div class="hero-side">
-            <div class="hs-item"><span class="hs-v" id="h-ded">–</span><span class="hs-l">deducted by insurer</span></div>
-            <div class="hs-item"><span class="hs-v" id="h-stuck">–</span><span class="hs-l">still stuck / unpaid</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="kpi-row">
-        <div class="mcard g-indigo"><div class="ml">Total claimed</div><div class="mv" id="m-claimed">–</div><div class="mh" id="m-claimed-n"></div></div>
-        <div class="mcard g-green"><div class="ml">Total received</div><div class="mv" id="m-paid">–</div><div class="mh" id="m-paid-n"></div></div>
-        <div class="mcard g-red"><div class="ml">Deducted by insurer</div><div class="mv" id="m-ded">–</div><div class="mh" id="m-ded-pct"></div></div>
-        <div class="mcard g-amber"><div class="ml">Stuck / pending</div><div class="mv" id="m-pend">–</div><div class="mh" id="m-pend-n"></div></div>
-      </div>
-      <div class="kpi-row">
-        <div class="mcard g-blue"><div class="ml">Avg settlement time</div><div class="mv" id="m-tat">–</div><div class="mh">days, submission → payment</div></div>
-        <div class="mcard g-violet"><div class="ml">Slowest settlement</div><div class="mv" id="m-tatmax">–</div><div class="mh">days (worst case)</div></div>
-        <div class="mcard g-rose"><div class="ml">Stuck over 90 days</div><div class="mv" id="m-old">–</div><div class="mh" id="m-old-n"></div></div>
-        <div class="mcard g-teal"><div class="ml">Paid claims</div><div class="mv" id="m-paidn">–</div><div class="mh">settled to date</div></div>
-      </div>
-
-      <div class="dtabs">
-        <button data-dt="overview" class="on">Overview</button>
-        <button data-dt="settle">Settlement</button>
-        <button data-dt="deduct">Deductions</button>
-        <button data-dt="pending">Pending</button>
-        <button data-dt="volume">Volume &amp; procedures</button>
-      </div>
-
-      <div class="dtab" id="dt-overview">
-        <div class="chart-grid">
-          <div class="chart-card wide"><h3 class="ctitle">Cash flow by month — claims raised vs payments received</h3><p class="cdesc">The rhythm of your cash: purple is what you billed each month, green is money that actually landed. They rarely line up — because the insurer pays old claims in sudden bulk batches, not steadily. Big green with small purple = a backlog being cleared.</p><div class="cwrap"><canvas id="c-money"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">Where the claimed money went</h3><p class="cdesc">Of every rupee you billed, how much actually came back (green), how much the insurer cut as deductions (red), and how much is still stuck with them, unpaid (amber). The whole circle is what you were owed.</p><div class="cwrap"><canvas id="c-outcome"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">Claim outcomes by count</h3><p class="cdesc">Counting claims (not rupees): how many have been paid, how many are still pending, and how many were rejected or cancelled outright.</p><div class="cwrap"><canvas id="c-outcomecnt"></canvas></div></div>
-          <div class="chart-card wide"><h3 class="ctitle">Where claims are right now</h3><p class="cdesc">A live snapshot of every claim's current stage — paid, on hold, under review, sent back, or stuck. The longest bars show where most of your claims are sitting today.</p><div class="cwrap"><canvas id="c-status"></canvas></div></div>
-        </div>
-      </div>
-
-      <div class="dtab" id="dt-settle" style="display:none">
-        <div class="chart-grid">
-          <div class="chart-card wide"><h3 class="ctitle">Avg days to get paid — by the month the claim was raised</h3><p class="cdesc">The real waiting time. Each bar is a month you submitted claims; its height is how many days those claims took to get paid, on average. The older months tell the truth — well over a year. Recent months look shorter only because just the quick ones are paid so far; the rest are still waiting.</p><div class="cwrap"><canvas id="c-lag"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">Paid vs still-pending — by month raised</h3><p class="cdesc">For each month you submitted claims, how many have actually been paid (green) versus how many are still waiting (amber). Tall amber columns in recent months = a whole month of your claims the insurer hasn't touched.</p><div class="cwrap"><canvas id="c-cohort"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">How long settled claims took (distribution)</h3><p class="cdesc">Of the claims that HAVE been paid, how long each one took — sorted into time bands. Bars stacking up on the right (91–180, 180+ days) mean most claims dragged past three to six months before payment.</p><div class="cwrap"><canvas id="c-tatdist"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">Avg settlement time by month paid</h3><p class="cdesc">The same delay seen from the payment side: for claims paid in each month, how many days they'd been waiting on average before the money finally came.</p><div class="cwrap"><canvas id="c-tat"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">How fast do you get paid?</h3><p class="cdesc">Of the claims that were settled, the share paid within 3 months (green), in 3–6 months (amber), or dragging past 6 months (red). A big red slice is the headline — most payments take over half a year.</p><div class="cwrap"><canvas id="c-speed"></canvas></div></div>
-          <div class="chart-card wide"><h3 class="ctitle">Claims paid per month (count)</h3><p class="cdesc">How many claims the insurer actually settled each month. Notice the spikes — they clear big batches all at once, then go quiet for months. Steady payment would look flat; this looks like a heartbeat.</p><div class="cwrap"><canvas id="c-paidcnt"></canvas></div></div>
-          <div class="chart-card wide"><h3 class="ctitle">Claim size vs time to settle</h3><p class="cdesc">Every dot is a settled claim: how much it was for (left–right) versus how long it took to get paid (up–down). If the dots drift upward as you go right, bigger claims take longer to pay.</p><div class="cwrap"><canvas id="c-scatter"></canvas></div></div>
-        </div>
-      </div>
-
-      <div class="dtab" id="dt-deduct" style="display:none">
-        <div class="chart-grid">
-          <div class="chart-card"><h3 class="ctitle">Deduction rate by month (%)</h3><p class="cdesc">For every ₹100 you claimed, how much the insurer knocked off before paying — as a percentage, month by month. A rising line means they're cutting more of your bills over time.</p><div class="cwrap"><canvas id="c-ded"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">Rupees deducted per month</h3><p class="cdesc">Not a percentage — the actual money. This is how many rupees simply vanished to deductions each month: amounts you earned, billed, and never received.</p><div class="cwrap"><canvas id="c-dedamt"></canvas></div></div>
-        </div>
-      </div>
-
-      <div class="dtab" id="dt-pending" style="display:none">
-        <div class="chart-grid">
-          <div class="chart-card"><h3 class="ctitle">Money stuck by age of claim</h3><p class="cdesc">Of the money still unpaid, how long it's been waiting. The red bar (90+ days) is your money frozen for over three months — the older it gets, the harder it is to recover.</p><div class="cwrap"><canvas id="c-aging"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">Money stuck by age (polar view)</h3><p class="cdesc">The same stuck-money aging, shown as a polar chart — each wedge is a time band, and the further it reaches out, the more money is frozen in that age group. The big outer wedge is your oldest, hardest-to-recover money.</p><div class="cwrap"><canvas id="c-agingpolar"></canvas></div></div>
-          <div class="chart-card wide"><h3 class="ctitle">Why claims are stuck (unpaid)</h3><p class="cdesc">The reasons your unpaid claims are held up — patient feedback pending, queries raised, sent back, and so on. This is your action list: the top bars are what to chase first to unlock payment.</p><div class="cwrap"><canvas id="c-stuck"></canvas></div></div>
-        </div>
-      </div>
-
-      <div class="dtab" id="dt-volume" style="display:none">
-        <div class="chart-grid">
-          <div class="chart-card"><h3 class="ctitle">Claims submitted per month</h3><p class="cdesc">Your workload over time — how many claims (surgeries and treatments) you submitted each month. This is the volume of business flowing through the hospital.</p><div class="cwrap"><canvas id="c-volume"></canvas></div></div>
-          <div class="chart-card"><h3 class="ctitle">Top procedures by volume</h3><p class="cdesc">Which surgeries and treatments make up most of your claims — where your clinical work is concentrated, and which procedures matter most to your revenue.</p><div class="cwrap"><canvas id="c-proc"></canvas></div></div>
-          <div class="chart-card wide"><h3 class="ctitle">Procedure risk map — speed vs deductions vs volume</h3><p class="cdesc">Each bubble is a procedure. Further right = slower to get paid; higher up = more heavily deducted; bigger bubble = more claims. The bubbles in the top-right are your problem procedures: high volume, slow to pay, and heavily cut.</p><div class="cwrap"><canvas id="c-bubble"></canvas></div></div>
-        </div>
-      </div>
     </div>
   </main>
 
@@ -543,24 +448,20 @@ let isAdmin=false;
 async function showApp(){
   $('login').style.display='none';$('app').style.display='block';
   try{const {data}=await sb.auth.getUser();isAdmin=((data.user&&data.user.email)||'').trim().toLowerCase()==='admin@vvistech.com';}catch(e){isAdmin=false;}
-  if(!isAdmin)$('nav-dash').style.display='none';   // only admin@vvistech.com sees the Dashboard (Settings is open to all)
   init();
 }
 
 // ---- nav ----
 function setupNav(){
   $('nav-alerts').onclick=()=>switchView('alerts');
-  $('nav-dash').onclick=()=>switchView('dash');
   $('nav-cases').onclick=()=>switchView('cases');
   $('nav-claims').onclick=()=>switchView('claims');
   $('nav-sync').onclick=()=>switchView('sync');
   $('nav-settings').onclick=()=>switchView('settings');
 }
 function switchView(v){
-  if(v==='dash'&&!isAdmin)v='cases';   // non-admins never see the Dashboard (Settings is open to all)
-  ['alerts','dash','cases','claims','sync','settings'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
+  ['alerts','cases','claims','sync','settings'].forEach(x=>{$('nav-'+x).classList.toggle('on',v===x);$('view-'+x).style.display=v===x?'block':'none';});
   if(v==='alerts')loadAlerts();
-  if(v==='dash')resizeCharts();
   if(v==='cases')loadCases();
   if(v==='claims')loadClaims();
   if(v==='sync')loadSync();
@@ -606,8 +507,9 @@ function alCard(title,sub,rows,cls,head,rowFn,id){
 const alWho=c=>'<td><div class="who">'+esc(c.patient_name||'(no name)')+'</div><div class="meta">'+esc(alCaseShort(c))+'</div></td>';
 function alDots(c){
   // plain words beat a dot strip: what is known, and what is missing today
-  if(!c.notes_count)return '<span class="al-r">Today missing</span><div class="meta">no notes scraped yet</div>';
-  return '<span class="al-r">Today missing</span><div class="meta">'+c.notes_count+' day'+(c.notes_count>1?'s':'')+' posted · last '+esc(c.notes_last_date||'')+'</div>';
+  const today=ddMon(new Date());
+  if(!c.notes_count)return '<span class="al-r">No note for '+today+'</span><div class="meta">earlier notes not read yet</div>';
+  return '<span class="al-r">No note for '+today+'</span><div class="meta">'+c.notes_count+' day'+(c.notes_count>1?'s':'')+' posted · last '+esc(c.notes_last_date||'')+'</div>';
 }
 
 async function loadAlerts(){
@@ -620,7 +522,17 @@ async function loadAlerts(){
     $('al-fresh').textContent=ageH==null?'':(ageH<1.5?'● Up to date — synced '+Math.max(1,Math.round(ageH*60))+' min ago':'● Data is '+(ageH<48?Math.round(ageH)+' hours':Math.round(ageH/24)+' days')+' old');
     $('al-fresh').className='al-fresh'+(ageH!=null&&ageH>3?' stale':'');
 
-    const ward=all.filter(alInWard),notes=all.filter(alNotesMissing);
+    const ward=all.filter(alInWard);
+    // the portal's own list ("Cases for which Clinical Notes is not Updated today"),
+    // captured by the scraper at every login - authoritative when it is from today
+    let notes=all.filter(alNotesMissing),notesSrc='derived from scraped notes';
+    try{
+      const {data:ns}=await sb.from('app_settings').select('value,updated_at').eq('key','notes_missing_today').maybeSingle();
+      if(ns&&ns.value){const p=JSON.parse(ns.value);const at=new Date(p.at||ns.updated_at);
+        if(fmtD(at)===fmtD(now)){const set=new Set(p.cases||[]);const byBare={};all.forEach(c=>byBare[alCaseShort(c)]=c);
+          notes=[...set].map(k=>byBare[k]||{case_no:'CASE/5722/'+k,patient_name:'(not in database yet)',claim_status:'',notes_count:0});
+          notesSrc='per portal at '+at.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});}}
+    }catch(e){}
     const queries=all.filter(c=>alQuery(c)),disch=all.filter(alDischargePending);
     const file=all.filter(alToFile).map(c=>{const d=parseCaseDate(c.status_date);const opens=d&&new Date(d.getTime()+CLAIM_OPENS*864e5),closes=d&&new Date(d.getTime()+CLAIM_CLOSES*864e5);return{c,d,opens,closes,left:closes?alDays(now,closes):null};}).sort((a,b)=>(a.left==null?999:a.left)-(b.left==null?999:b.left));
     const ceo=all.filter(alAwaitCeo).map(c=>({c,d:parseCaseDate(c.status_date)})).sort((a,b)=>(a.d||0)-(b.d||0));
@@ -641,7 +553,7 @@ async function loadAlerts(){
     const overdue=live.filter(x=>x.left!=null&&x.left<0);
     const preCount=queries.filter(c=>alQuery(c)==='preauth').length;
     const S={};
-    S.notes={cls:'red',l:'NOTES MISSING TODAY',v:notes.length,s:'of '+ward.length+' admitted',html:()=>alCard('Clinical notes missing','No note posted today for admitted patients',notes,'r','<th>Patient</th><th>Status</th><th>Clinical notes</th>',
+    S.notes={cls:'red',l:'NOTES MISSING TODAY',v:notes.length,s:notesSrc,html:()=>alCard('Clinical notes missing','No note for '+ddMon(now)+' · '+notesSrc,notes,'r','<th>Patient</th><th>Status</th><th>Clinical notes</th>',
       c=>alWho(c)+'<td class="meta">'+esc(c.claim_status||'')+'</td><td>'+alDots(c)+'</td>','al-notes')};
     S.queries={cls:'red',l:'TRUST QUERIES OPEN',v:queries.length,s:preCount+' preauth · '+(queries.length-preCount)+' claim',html:()=>alCard('Trust asked a question','Reply or the case stalls',queries,'r','<th>Patient</th><th>Stage · question</th><th>Asked</th><th>Reply by</th>',
       c=>{const kind=alQuery(c);let asked=null,what='';
@@ -815,7 +727,6 @@ async function init(){
   if(started)return;started=true;
   setupNav();
   loadStats();                           // Cases-tab KPI cards + last-sync pill (fast head counts)
-  if(isAdmin){ setupDashTabs(); loadDashboard(); }   // the Dashboard is prepared in the background for the admin
   switchView('alerts');                               // everyone lands on Alerts - the doctor's morning screen
 }
 
