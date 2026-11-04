@@ -207,13 +207,13 @@
   .wtab{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;border:1.5px solid var(--border-strong)}
   .wtab th{text-align:left;padding:8px 10px;background:var(--bg);color:var(--text-2);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;border:1px solid var(--border-strong)}
   .wtab td{padding:8px 10px;border:1px solid var(--border-strong);vertical-align:top;line-height:1.5;word-break:break-word;overflow-wrap:anywhere}
-  .wtab th:nth-child(1),.wtab td:nth-child(1){width:15%}
+  .wtab th:nth-child(1),.wtab td:nth-child(1){width:14%}
   .wtab th:nth-child(2),.wtab td:nth-child(2){width:15%}
-  .wtab th:nth-child(3),.wtab td:nth-child(3){width:44%}
-  .wtab td.amt,.wtab td.dt{white-space:nowrap;word-break:normal;overflow-wrap:normal}
-  .wtab td.amt{text-align:right}
+  .wtab th:nth-child(3),.wtab td:nth-child(3){width:42%}
+  .wtab td.dt{word-break:keep-all;overflow-wrap:normal}            /* breaks only at the space: date / time */
+  .wtab td.amt{white-space:nowrap;word-break:normal;overflow-wrap:normal;text-align:right}
   .wtab th:nth-child(4),.wtab td:nth-child(4){width:16%}
-  .wtab th:nth-child(5),.wtab td:nth-child(5){width:10%}
+  .wtab th:nth-child(5),.wtab td:nth-child(5){width:13%}
   .wtab td.dt{color:var(--text-2)}
   .wtab td.rm p{white-space:pre-wrap;margin:0}.wtab td.rm ol{margin:0 0 0 16px;padding:0}
   .wtab td.amt{text-align:right}
