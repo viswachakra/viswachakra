@@ -478,7 +478,11 @@ function switchView(v){
 //  8 preauth_amount vs sanctioned (paid if paid, else approved) - doctor only
 //  9 in-ward patients (PPD Approved / Surgery Update) whose notes_last_date is not today
 const AL_COLS='case_no,patient_name,claim_status,status_date,claimed_amount,approved_amount,paid_amount,paid_date,is_paid,preauth_amount,preauth_status,preauth_query_open,notes_last_date,notes_count,latest_comment,latest_comment_by,latest_comment_date,last_synced';
-const CLAIM_OPENS=11,CLAIM_CLOSES=14,CLAIM_WARN=3,REPLY_DAYS=7;
+// Trust time limits for a PRIVATE hospital (Revised limits effective 20 Jan 2025):
+//   discharge -> claim 21 d (opens day 11 per the doctor), claim-stage pending reply 14 d,
+//   preauth pending reply 10 d, surgery -> discharge 30 d, preauth approved -> surgery 30 d,
+//   IP registered -> preauth initiated 7 d (portal warns at 72 h).
+const CLAIM_OPENS=11,CLAIM_CLOSES=21,CLAIM_WARN=3,REPLY_DAYS=14,PREAUTH_REPLY_DAYS=10,SURGERY_TO_DISCHARGE=30,PREAUTH_TO_SURGERY=30;
 let alertsAll=null,alSections={},alCurrent=null;
 function alShow(key){const sec=alSections[key];if(!sec)return;alCurrent=key;$('al-detail').innerHTML=sec.html();document.querySelectorAll('.al-kpi').forEach(t=>t.classList.toggle('on',t.dataset.go===key));}
 const alRx=(s,p)=>new RegExp(p,'i').test(s||'');
@@ -573,11 +577,12 @@ async function loadAlerts(){
         if(kind==='preauth'){const r=preLast[c.case_no];asked=r?parseWfDate(r.date_time):null;what='Preauth · '+esc((r&&(r.role_name+' "'+r.action+'"'))||c.preauth_status||'pending');}
         else{asked=parseWfDate(c.latest_comment_date);what='Claim · '+esc(c.claim_status||'');}
         const by=asked?new Date(asked.getTime()+REPLY_DAYS*864e5):null;const left=by?alDays(now,by):null;
-        const dueTxt=kind==='preauth'?'<span class="al-r">Today</span>':(left==null?'–':left<0?'<span class="al-r">Overdue '+(-left)+' d</span>':left<=2?'<span class="al-r">'+left+' days</span>':'<span class="al-a">'+left+' days</span>');
+        const win=kind==='preauth'?PREAUTH_REPLY_DAYS:REPLY_DAYS;const by2=asked?new Date(asked.getTime()+win*864e5):null;const l2=by2?alDays(now,by2):null;
+        const dueTxt=l2==null?'–':l2<0?'<span class="al-r">Overdue '+(-l2)+' d — auto-cancel/revert</span>':l2<=3?'<span class="al-r">'+l2+' days</span>':'<span class="al-a">'+l2+' days</span>';
         return alWho(c)+'<td>'+what+'</td><td>'+esc(alAgo(asked))+'</td><td>'+dueTxt+'</td>';},'al-queries')};
-    const longStay=disch.filter(c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);return d&&alDays(d,now)>=5;}).length;
-    S.discharge={cls:longStay?'amber':'',l:'IN WARD AFTER SURGERY',v:disch.length,s:longStay+' over 5 days — check discharge posted',html:()=>alCard('In ward after surgery','Post the Discharge Update the day the patient leaves',disch,longStay?'a':'','<th>Patient</th><th>Surgery</th><th>Days since</th>',
-      c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);const n=d?alDays(d,now):null;return alWho(c)+'<td>'+esc(ddMon(d))+'</td><td class="'+(n!=null&&n>=14?'al-r':n!=null&&n>=5?'al-a':'al-m')+'">'+(n==null?'–':n+' day'+(n===1?'':'s')+(n>=14?' — discharged without posting?':''))+'</td>';},'al-discharge')};
+    const longStay=disch.filter(c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);return d&&alDays(d,now)>=SURGERY_TO_DISCHARGE-9;}).length;
+    S.discharge={cls:longStay?'amber':'',l:'IN WARD AFTER SURGERY',v:disch.length,s:longStay+' near the 30-day discharge limit',html:()=>alCard('In ward after surgery','Post the Discharge Update the day the patient leaves',disch,longStay?'a':'','<th>Patient</th><th>Surgery</th><th>Days since</th>',
+      c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);const n=d?alDays(d,now):null;return alWho(c)+'<td>'+esc(ddMon(d))+'</td><td class="'+(n!=null&&n>=SURGERY_TO_DISCHARGE?'al-r':n!=null&&n>=SURGERY_TO_DISCHARGE-9?'al-a':'al-m')+'">'+(n==null?'–':n+' day'+(n===1?'':'s')+(n>=SURGERY_TO_DISCHARGE?' — past the 30-day limit: Trust cancels':n>=SURGERY_TO_DISCHARGE-9?' — discharge update due within '+(SURGERY_TO_DISCHARGE-n)+' d':''))+'</td>';},'al-discharge')};
     S.file={cls:'amber',l:'CLAIMS TO FILE',v:live.length,s:dueSoon.length+' due in '+CLAIM_WARN+' days · '+overdue.length+' overdue',html:()=>alCard('Discharged — claim to file','Window opens '+CLAIM_OPENS+' days after discharge, closes at '+CLAIM_CLOSES,live,'a','<th>Patient</th><th>Discharged</th><th>Window</th><th>Status</th>',
       x=>{const st=x.left==null?'–':x.opens>now?'<span class="al-m">Opens '+esc(ddMon(x.opens))+'</span>':x.left<0?'<span class="al-r">OVERDUE '+(-x.left)+' d — check auto-cancel</span>':x.left===0?'<span class="al-r">Today — last day</span>':'<span class="'+(x.left<=CLAIM_WARN?'al-r':'al-m')+'">'+x.left+' days left</span>';
         return alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td><td>'+esc(ddMon(x.opens))+' – '+esc(ddMon(x.closes))+'</td><td>'+st+'</td>';},'al-file')
