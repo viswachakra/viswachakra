@@ -132,10 +132,11 @@
   .badge{background:var(--red-fg);color:#fff;border-radius:9px;font-size:11px;padding:1px 7px;margin-left:5px;vertical-align:1px}
   .al-top{display:flex;align-items:baseline;gap:16px;margin-bottom:14px}.al-top h1{font-size:22px;margin:0}
   .al-fresh{color:var(--green-fg);font-weight:600;font-size:12.5px}.al-fresh.stale{color:var(--amber-fg)}
-  .al-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:22px}
-  @media(max-width:1100px){.al-kpis{grid-template-columns:repeat(3,1fr)}}
+  .al-kpis{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;margin-bottom:18px}
+  @media(max-width:1200px){.al-kpis{grid-template-columns:repeat(4,1fr)}}
   .al-kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;cursor:pointer}
-  .al-kpi .l{font-size:10.5px;letter-spacing:.5px;font-weight:700;color:var(--text-3)}.al-kpi .v{font-size:28px;font-weight:800;margin-top:4px}.al-kpi .s{font-size:11.5px;color:var(--text-3);margin-top:2px}
+  .al-kpi .l{font-size:10.5px;letter-spacing:.5px;font-weight:700;color:var(--text-3)}.al-kpi .v{font-size:26px;font-weight:800;margin-top:4px}.al-kpi .s{font-size:11.5px;color:var(--text-3);margin-top:2px}
+  .al-kpi.on{box-shadow:0 0 0 2px var(--primary)}
   .al-kpi.red{border-left:4px solid var(--red-fg)}.al-kpi.red .v{color:var(--red-fg)}.al-kpi.amber{border-left:4px solid #e09b1a}.al-kpi.amber .v{color:var(--amber-fg)}.al-kpi.green .v{color:var(--green-fg)}
   .al-grid{display:grid;grid-template-columns:1.15fr 1.15fr .9fr;gap:18px;align-items:start}
   @media(max-width:1100px){.al-grid{grid-template-columns:1fr}}
@@ -260,27 +261,9 @@
     <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span></div>
     <div id="al-loading" class="empty">Loading…</div>
     <div id="al-content" style="display:none">
+      <!-- the tiles ARE the navigation: one list shows at a time underneath -->
       <div class="al-kpis" id="al-kpis"></div>
-      <div class="al-grid">
-        <div>
-          <h2 class="al-h2">Today <span class="al-tag red">DO NOW</span></h2>
-          <div id="al-notes"></div>
-          <div id="al-queries"></div>
-          <div id="al-discharge"></div>
-        </div>
-        <div>
-          <h2 class="al-h2">Claims to file <span class="al-tag amber">DEADLINES</span></h2>
-          <div id="al-file"></div>
-          <div id="al-money-wrap"><h2 class="al-h2">Money <span class="al-tag gold">DOCTOR ONLY</span></h2><div id="al-money"></div></div>
-        </div>
-        <div>
-          <h2 class="al-h2">With the Trust <span class="al-tag grey">NOTHING TO DO</span></h2>
-          <div class="al-pipe" id="al-pipe"></div>
-          <div id="al-ceo"></div>
-          <div id="al-approved"></div>
-          <div id="al-paid"></div>
-        </div>
-      </div>
+      <div id="al-detail"></div>
     </div>
   </main>
 
@@ -591,7 +574,8 @@ function switchView(v){
 //  9 in-ward patients (PPD Approved / Surgery Update) whose notes_last_date is not today
 const AL_COLS='case_no,patient_name,claim_status,status_date,claimed_amount,approved_amount,paid_amount,paid_date,is_paid,preauth_amount,preauth_status,preauth_query_open,notes_last_date,notes_count,latest_comment,latest_comment_by,latest_comment_date,last_synced';
 const CLAIM_OPENS=11,CLAIM_CLOSES=14,CLAIM_WARN=3,REPLY_DAYS=7;
-let alertsAll=null;
+let alertsAll=null,alSections={},alCurrent=null;
+function alShow(key){const sec=alSections[key];if(!sec)return;alCurrent=key;$('al-detail').innerHTML=sec.html();document.querySelectorAll('.al-kpi').forEach(t=>t.classList.toggle('on',t.dataset.go===key));}
 const alRx=(s,p)=>new RegExp(p,'i').test(s||'');
 const alDay=d=>d?new Date(d.getFullYear(),d.getMonth(),d.getDate()):null;
 const alDays=(a,b)=>Math.round((alDay(b)-alDay(a))/864e5);
@@ -642,63 +626,57 @@ async function loadAlerts(){
     const appr=all.filter(alCeoApproved).map(c=>({c,d:parseCaseDate(c.status_date)})).sort((a,b)=>(b.d||0)-(a.d||0));
     const paidM=all.filter(c=>{const d=alPaidDate(c);return d&&d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth();});
     const cutRows=all.filter(c=>alCut(c)>0&&(alPaidDate(c)||parseCaseDate(c.status_date)||now).getFullYear()===now.getFullYear()).sort((a,b)=>alCut(b)-alCut(a));
-    const dueSoon=file.filter(x=>x.left!=null&&x.left<=CLAIM_WARN);
+    const dueSoon=file.filter(x=>x.left!=null&&x.left>=0&&x.left<=CLAIM_WARN);
 
     // when was each preauth query asked? (last row of its preauth workflow)
     const preIds=queries.filter(c=>alQuery(c)==='preauth').map(c=>c.case_no);
     const preLast={};
     if(preIds.length){const {data}=await sb.from('preauth_workflow').select('case_no,row_index,date_time,role_name,action').in('case_no',preIds.slice(0,300));(data||[]).forEach(r=>{if(!preLast[r.case_no]||r.row_index>preLast[r.case_no].row_index)preLast[r.case_no]=r;});}
 
-    // ---- KPIs ----
-    const kpi=(cls,l,v,s,target)=>'<div class="al-kpi '+cls+'" data-go="'+target+'"><div class="l">'+l+'</div><div class="v">'+v+'</div><div class="s">'+s+'</div></div>';
-    $('al-kpis').innerHTML=
-      kpi('red','NOTES MISSING TODAY',notes.length,'of '+ward.length+' admitted','al-notes')+
-      kpi('red','TRUST QUERIES OPEN',queries.length,queries.filter(c=>alQuery(c)==='preauth').length+' preauth · '+queries.filter(c=>alQuery(c)==='claim').length+' claim','al-queries')+
-      kpi('amber','CLAIMS TO FILE',file.length,dueSoon.length+' due within '+CLAIM_WARN+' days · '+file.filter(x=>x.left!=null&&x.left<0).length+' overdue','al-file')+
-      kpi('','AWAITING CEO',ceo.length,isAdmin?inrShortW(ceo.reduce((s,x)=>s+(x.c.claimed_amount||0),0)):'','al-ceo')+
-      kpi('green','CEO APPROVED',appr.length,isAdmin?inrShortW(appr.reduce((s,x)=>s+(x.c.approved_amount||0),0))+' awaiting payment':'','al-approved')+
-      kpi('green','PAID THIS MONTH',paidM.length,isAdmin?inrShortW(paidM.reduce((s,c)=>s+(c.paid_amount||0),0))+' received':'','al-paid');
-    const badge=notes.length+queries.length+dueSoon.length;
-    $('alerts-badge').textContent=badge;$('alerts-badge').style.display=badge?'inline':'none';
-
-    // ---- Today ----
-    $('al-notes').innerHTML=alCard('Clinical notes missing','No note posted today for admitted patients',notes,'r','<th>Patient</th><th>Status</th><th>Notes</th>',
-      c=>alWho(c)+'<td class="meta">'+esc(c.claim_status||'')+'<br>'+(c.notes_count?c.notes_count+' posted · last '+esc(c.notes_last_date):'no notes yet')+'</td><td>'+alDots(c)+'</td>','al-notes');
-    $('al-queries').innerHTML=alCard('Trust asked a question','Reply or the case stalls',queries,'r','<th>Patient</th><th>Stage · question</th><th>Asked</th><th>Reply by</th>',
+    // ---- tiles are the navigation; exactly one list shows underneath ----
+    // Discharges older than 30 days past the window are stale records (filed or
+    // cancelled since the last scan) - kept out of the red count, noted in grey.
+    const live=file.filter(x=>x.left==null||x.left>=-30), stale=file.filter(x=>x.left!=null&&x.left<-30);
+    const overdue=live.filter(x=>x.left!=null&&x.left<0);
+    const preCount=queries.filter(c=>alQuery(c)==='preauth').length;
+    const S={};
+    S.notes={cls:'red',l:'NOTES MISSING TODAY',v:notes.length,s:'of '+ward.length+' admitted',html:()=>alCard('Clinical notes missing','No note posted today for admitted patients',notes,'r','<th>Patient</th><th>Status</th><th>Notes</th>',
+      c=>alWho(c)+'<td class="meta">'+esc(c.claim_status||'')+'<br>'+(c.notes_count?c.notes_count+' posted · last '+esc(c.notes_last_date):'no notes yet')+'</td><td>'+alDots(c)+'</td>','al-notes')};
+    S.queries={cls:'red',l:'TRUST QUERIES OPEN',v:queries.length,s:preCount+' preauth · '+(queries.length-preCount)+' claim',html:()=>alCard('Trust asked a question','Reply or the case stalls',queries,'r','<th>Patient</th><th>Stage · question</th><th>Asked</th><th>Reply by</th>',
       c=>{const kind=alQuery(c);let asked=null,what='';
         if(kind==='preauth'){const r=preLast[c.case_no];asked=r?parseWfDate(r.date_time):null;what='Preauth · '+esc((r&&(r.role_name+' "'+r.action+'"'))||c.preauth_status||'pending');}
         else{asked=parseWfDate(c.latest_comment_date);what='Claim · '+esc(c.claim_status||'');}
         const by=asked?new Date(asked.getTime()+REPLY_DAYS*864e5):null;const left=by?alDays(now,by):null;
         const dueTxt=kind==='preauth'?'<span class="al-r">Today</span>':(left==null?'–':left<0?'<span class="al-r">Overdue '+(-left)+' d</span>':left<=2?'<span class="al-r">'+left+' days</span>':'<span class="al-a">'+left+' days</span>');
-        return alWho(c)+'<td>'+what+'</td><td>'+esc(alAgo(asked))+'</td><td>'+dueTxt+'</td>';},'al-queries');
-    $('al-discharge').innerHTML=alCard('Discharge update pending','Surgery done, no discharge posted',disch,'a','<th>Patient</th><th>Surgery</th><th>Since</th>',
-      c=>{const d=parseCaseDate(c.status_date);const n=d?alDays(d,now):null;return alWho(c)+'<td>'+esc(ddMon(d))+'</td><td class="'+(n!=null&&n>=5?'al-a':'al-m')+'">'+(n==null?'–':n+' days')+'</td>';},'al-discharge');
-
-    // ---- Claims to file ----
-    $('al-file').innerHTML=alCard('Discharged — claim to file','Window opens '+CLAIM_OPENS+' days after discharge, closes at '+CLAIM_CLOSES,file,'a','<th>Patient</th><th>Discharged</th><th>Window</th><th>Status</th>',
+        return alWho(c)+'<td>'+what+'</td><td>'+esc(alAgo(asked))+'</td><td>'+dueTxt+'</td>';},'al-queries')};
+    S.discharge={cls:'amber',l:'DISCHARGE PENDING',v:disch.length,s:'surgery done, not posted',html:()=>alCard('Discharge update pending','Surgery done, no discharge posted',disch,'a','<th>Patient</th><th>Surgery</th><th>Since</th>',
+      c=>{const d=parseCaseDate(c.status_date);const n=d?alDays(d,now):null;return alWho(c)+'<td>'+esc(ddMon(d))+'</td><td class="'+(n!=null&&n>=5?'al-a':'al-m')+'">'+(n==null?'–':n+' days')+'</td>';},'al-discharge')};
+    S.file={cls:'amber',l:'CLAIMS TO FILE',v:live.length,s:dueSoon.length+' due in '+CLAIM_WARN+' days · '+overdue.length+' overdue',html:()=>alCard('Discharged — claim to file','Window opens '+CLAIM_OPENS+' days after discharge, closes at '+CLAIM_CLOSES,live,'a','<th>Patient</th><th>Discharged</th><th>Window</th><th>Status</th>',
       x=>{const st=x.left==null?'–':x.opens>now?'<span class="al-m">Opens '+esc(ddMon(x.opens))+'</span>':x.left<0?'<span class="al-r">OVERDUE '+(-x.left)+' d — check auto-cancel</span>':x.left===0?'<span class="al-r">Today — last day</span>':'<span class="'+(x.left<=CLAIM_WARN?'al-r':'al-m')+'">'+x.left+' days left</span>';
-        return alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td><td>'+esc(ddMon(x.opens))+' – '+esc(ddMon(x.closes))+'</td><td>'+st+'</td>';},'al-file');
-
-    // ---- Money (doctor only) ----
-    $('al-money-wrap').style.display=isAdmin?'block':'none';
-    if(isAdmin){
-      const total=cutRows.reduce((s,c)=>s+alCut(c),0);const preTot=all.filter(c=>c.preauth_amount&&(alPaidDate(c)||parseCaseDate(c.status_date)||now).getFullYear()===now.getFullYear()).reduce((s,c)=>s+c.preauth_amount,0);
-      const pct=preTot?Math.round(total/preTot*100):0;
-      const rows=cutRows.map((c,i)=>'<tr data-case="'+esc(c.case_no)+'"'+(i>=5?' class="al-hid" style="display:none"':'')+'>'+alWho(c)+'<td>'+inr0(c.preauth_amount)+'</td><td>'+inr0(alSanctioned(c))+'</td><td class="al-r">−'+inr0(alCut(c))+'</td></tr>').join('');
-      $('al-money').innerHTML='<div class="card al-card al-money" id="al-money-card"><div class="l">PREAUTH vs FINAL APPROVED — '+now.getFullYear()+'</div><div class="big">'+inr0(total)+' <span style="font-size:13px;color:var(--text-3);font-weight:500">cut on '+cutRows.length+' claims</span></div><div class="al-bar"><i style="width:'+Math.min(100,pct)+'%"></i></div><div style="font-size:11.5px;color:var(--text-3)">'+pct+'% of '+inrShortW(preTot)+' preauthorised</div>'
-        +(cutRows.length?'<table class="al-t" style="margin-top:10px"><tr><th>Patient</th><th>Preauth</th><th>Approved</th><th>Cut</th></tr>'+rows+'</table>'+(cutRows.length>5?'<div class="al-more" data-more="al-money-card">+ '+(cutRows.length-5)+' more ›</div>':''):'<div class="al-empty">No claim this year was approved below its preauth amount — or the preauth data is still being collected.</div>')+'</div>';
-    }
-
-    // ---- With the Trust ----
-    $('al-pipe').innerHTML='<div class="card"><div class="v">'+ceo.length+'</div><small>Awaiting CEO</small></div><div class="arrow">›</div><div class="card"><div class="v al-g">'+appr.length+'</div><small>CEO approved</small></div><div class="arrow">›</div><div class="card"><div class="v al-g">'+paidM.length+'</div><small>Paid this month</small></div>';
-    $('al-ceo').innerHTML=alCard('Awaiting CEO','Longest waiting first',ceo,'','<th>Patient</th><th>Sent to CEO</th><th>Waiting</th>',
-      x=>{const n=x.d?alDays(x.d,now):null;return alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td><td class="'+(n!=null&&n>45?'al-a':'')+'">'+(n==null?'–':n+' days')+'</td>';},'al-ceo');
-    $('al-approved').innerHTML=alCard('CEO approved — awaiting payment','Amount is final',appr,'g','<th>Patient</th><th>Approved</th>'+(isAdmin?'<th>Amount</th>':''),
-      x=>alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td>'+(isAdmin?'<td class="'+(alCut(x.c)?'al-r':'')+'">'+inr0(x.c.approved_amount)+(alCut(x.c)?' <span class="meta">(preauth '+inr0(x.c.preauth_amount)+')</span>':'')+'</td>':''),'al-approved');
+        return alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td><td>'+esc(ddMon(x.opens))+' – '+esc(ddMon(x.closes))+'</td><td>'+st+'</td>';},'al-file')
+      +(stale.length?'<div class="al-empty">'+stale.length+' older discharge'+(stale.length>1?'s':'')+' (window closed over a month ago) not shown — these records predate the last scan and refresh as the sweep reaches them.</div>':'')};
+    S.ceo={cls:'',l:'AWAITING CEO',v:ceo.length,s:isAdmin?inrShortW(ceo.reduce((t,x)=>t+(x.c.claimed_amount||0),0)):'',html:()=>alCard('Awaiting CEO','Longest waiting first',ceo,'','<th>Patient</th><th>Sent to CEO</th><th>Waiting</th>',
+      x=>{const n=x.d?alDays(x.d,now):null;return alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td><td class="'+(n!=null&&n>45?'al-a':'')+'">'+(n==null?'–':n+' days')+'</td>';},'al-ceo')};
+    S.approved={cls:'green',l:'CEO APPROVED',v:appr.length,s:isAdmin?inrShortW(appr.reduce((t,x)=>t+(x.c.approved_amount||0),0))+' awaiting payment':'',html:()=>alCard('CEO approved — awaiting payment','Amount is final',appr,'g','<th>Patient</th><th>Approved</th>'+(isAdmin?'<th>Amount</th>':''),
+      x=>alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td>'+(isAdmin?'<td class="'+(alCut(x.c)?'al-r':'')+'">'+inr0(x.c.approved_amount)+(alCut(x.c)?' <span class="meta">(preauth '+inr0(x.c.preauth_amount)+')</span>':'')+'</td>':''),'al-approved')};
     const byDay={};paidM.forEach(c=>{const d=alPaidDate(c);const k=fmtD(d);(byDay[k]=byDay[k]||{d,n:0,amt:0,c:{case_no:'',patient_name:''}});byDay[k].n++;byDay[k].amt+=c.paid_amount||0;});
     const paidRows=Object.values(byDay).sort((a,b)=>b.d-a.d);
-    $('al-paid').innerHTML=alCard('Paid this month',now.toLocaleDateString('en-IN',{month:'long'}),paidRows,'g','<th>Date</th><th>Claims</th>'+(isAdmin?'<th>Received</th>':''),
-      r=>'<td>'+esc(ddMon(r.d))+'</td><td>'+r.n+'</td>'+(isAdmin?'<td class="al-g">'+inr0(r.amt)+'</td>':''),'al-paid').replace(/ data-case=""/g,'');
+    S.paid={cls:'green',l:'PAID THIS MONTH',v:paidM.length,s:isAdmin?inrShortW(paidM.reduce((t,c)=>t+(c.paid_amount||0),0))+' received':'',html:()=>alCard('Paid this month',now.toLocaleDateString('en-IN',{month:'long'}),paidRows,'g','<th>Date</th><th>Claims</th>'+(isAdmin?'<th>Received</th>':''),
+      r=>'<td>'+esc(ddMon(r.d))+'</td><td>'+r.n+'</td>'+(isAdmin?'<td class="al-g">'+inr0(r.amt)+'</td>':''),'al-paid').replace(/ data-case=""/g,'')};
+    if(isAdmin){
+      const total=cutRows.reduce((t,c)=>t+alCut(c),0);const preTot=all.filter(c=>c.preauth_amount&&(alPaidDate(c)||parseCaseDate(c.status_date)||now).getFullYear()===now.getFullYear()).reduce((t,c)=>t+c.preauth_amount,0);
+      const pct=preTot?Math.round(total/preTot*100):0;
+      S.money={cls:'red',l:'PREAUTH CUT '+now.getFullYear(),v:inrShortW(total),s:cutRows.length+' claims below preauth',html:()=>{
+        const rows=cutRows.map((c,i)=>'<tr data-case="'+esc(c.case_no)+'"'+(i>=5?' class="al-hid" style="display:none"':'')+'>'+alWho(c)+'<td>'+inr0(c.preauth_amount)+'</td><td>'+inr0(alSanctioned(c))+'</td><td class="al-r">−'+inr0(alCut(c))+'</td></tr>').join('');
+        return '<div class="card al-card al-money" id="al-money-card"><div class="l">PREAUTH vs FINAL APPROVED — '+now.getFullYear()+' · DOCTOR ONLY</div><div class="big">'+inr0(total)+' <span style="font-size:13px;color:var(--text-3);font-weight:500">cut on '+cutRows.length+' claims</span></div><div class="al-bar"><i style="width:'+Math.min(100,pct)+'%"></i></div><div style="font-size:11.5px;color:var(--text-3)">'+pct+'% of '+inrShortW(preTot)+' preauthorised</div>'
+          +(cutRows.length?'<table class="al-t" style="margin-top:10px"><tr><th>Patient</th><th>Preauth</th><th>Approved</th><th>Cut</th></tr>'+rows+'</table>'+(cutRows.length>5?'<div class="al-more" data-more="al-money-card">+ '+(cutRows.length-5)+' more ›</div>':''):'<div class="al-empty">No claim this year was approved below its preauth amount — or the preauth data is still being collected.</div>')+'</div>';}};
+    }
+    alSections=S;
+    const order=['notes','queries','discharge','file','ceo','approved','paid','money'].filter(k=>S[k]);
+    $('al-kpis').innerHTML=order.map(k=>'<div class="al-kpi '+S[k].cls+'" data-go="'+k+'"><div class="l">'+S[k].l+'</div><div class="v">'+S[k].v+'</div><div class="s">'+S[k].s+'</div></div>').join('');
+    const badge=notes.length+queries.length+dueSoon.length+overdue.length;
+    $('alerts-badge').textContent=badge;$('alerts-badge').style.display=badge?'inline':'none';
+    alShow(alCurrent&&S[alCurrent]?alCurrent:(order.find(k=>typeof S[k].v==='number'&&S[k].v>0)||order[0]));
 
     $('al-loading').style.display='none';$('al-content').style.display='block';
   }catch(e){$('al-loading').textContent='Couldn\'t load alerts — '+((e&&e.message)||'network error');$('al-loading').style.display='block';}
@@ -707,7 +685,7 @@ function inrShortW(v){v=Math.round(v||0);if(v>=1e7)return '₹'+(v/1e7).toFixed(
 // row click → case detail; "+N more" → reveal; KPI tile → scroll to its card
 document.addEventListener('click',e=>{
   const more=e.target.closest('.al-more');if(more){const card=$(more.dataset.more);if(card){card.querySelectorAll('.al-hid').forEach(tr=>tr.style.display='');more.remove();}return;}
-  const kpi=e.target.closest('.al-kpi');if(kpi){const el=$(kpi.dataset.go);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});return;}
+  const kpi=e.target.closest('.al-kpi');if(kpi){alShow(kpi.dataset.go);return;}
   const tr=e.target.closest('#al-content tr[data-case]');if(tr&&tr.dataset.case)showDetail(tr.dataset.case);
 });
 
