@@ -1235,12 +1235,48 @@ function fmtRemarks(t){
 async function showDetail(caseNo){
   const {data:cr}=await sb.from('cases').select('*').eq('case_no',caseNo).single();
   const {data:rows}=await sb.from('claim_workflow').select('*').eq('case_no',caseNo).order('row_index');
+  const {data:pre}=await sb.from('preauth_workflow').select('*').eq('case_no',caseNo).order('row_index');
+  const {data:notes}=await sb.from('clinical_notes').select('*').eq('case_no',caseNo);
   const c=cr||{};
   const amtOK=v=>v!=null&&String(v).trim()!==''&&String(v).trim()!=='-';  // a workflow row shows its amount only when it has one
   $('p-title').textContent=c.case_no||caseNo;$('p-sub').textContent=(c.patient_name||'')+(c.nwh_name?' · '+c.nwh_name:'');
   const info=[['Claim no',c.claim_no],['Card no',c.card_no],['District',c.district],['Mandal',c.mandal],['Village',c.village],['Contact',c.contact_no],['IP no',c.ip_no],['IP registration',c.ip_registration_dt],['Category',c.category],['Procedure',c.procedure_name]];
   let h='<div class="info">'+info.map(([k,v])=>`<div><div class="k">${k}</div><div class="val">${esc(v)||'–'}</div></div>`).join('')+'</div>';
   h+=`<div style="margin-bottom:20px"><span class="${badge(c.claim_status)}" style="max-width:none">${esc(c.claim_status||c.case_status||'–')}</span></div>`;
+  // ---- clinical notes: one line per ward day; today highlighted when missing ----
+  const nl=(notes||[]).slice().sort((a,b)=>(parseCaseDate(b.note_date)||0)-(parseCaseDate(a.note_date)||0));
+  const todayStr=fmtD(new Date()), inWard=!c.is_paid&&/Preauthorisation PPD Approved|^Surgery Update/i.test(c.claim_status||'');
+  if(nl.length||inWard){
+    const hasToday=nl.some(n=>n.note_date===todayStr);
+    h+=`<h3 class="st" style="margin:0 0 8px">Clinical notes <span style="font-weight:500;color:var(--text-3);font-size:12px">· ${nl.length} day${nl.length===1?'':'s'} posted</span></h3>`;
+    if(inWard&&!hasToday)h+=`<div class="al-notice" style="margin-bottom:8px"><b>TODAY</b>No clinical note posted for ${esc(todayStr)} yet.</div>`;
+    if(nl.length){h+='<table class="wtab" style="margin-bottom:20px"><thead><tr><th style="width:18%">Date</th><th style="width:18%">Ward</th><th>Doctor\'s progress note</th></tr></thead><tbody>';
+      nl.forEach(n=>{h+=`<tr><td class="dt">${esc(n.note_date)}</td><td>${esc(n.ward_type||'–')}</td><td class="rm">${esc(n.progress_notes||'–')}</td></tr>`;});h+='</tbody></table>';}
+    else h+='<div class="empty" style="padding:12px 0 20px">No clinical notes read for this case yet.</div>';
+  }
+  // ---- preauth: the Trust's promise vs what was claimed and finally sanctioned ----
+  const pl=pre||[];
+  if(pl.length||c.preauth_amount){
+    const sanctioned=c.is_paid?c.paid_amount:c.approved_amount;
+    const cut=(c.preauth_amount&&sanctioned&&sanctioned<c.preauth_amount)?c.preauth_amount-sanctioned:0;
+    const fig=(l,v,col)=>`<div><div class="k">${l}</div><div class="val" style="font-size:17px;font-weight:800;color:${col}">${v}</div></div>`;
+    h+=`<h3 class="st" style="margin:0 0 8px">Preauth</h3><div class="info" style="margin-bottom:10px">`
+      +fig('Preauth approved',inr0(c.preauth_amount),'#b4232e')+fig('Claimed',inr0(c.claimed_amount),'var(--text)')
+      +fig(c.is_paid?'Paid':'Approved',inr0(sanctioned),cut?'var(--red-fg)':'var(--green-fg)')
+      +(cut?fig('Cut vs preauth','−'+inr0(cut),'var(--red-fg)'):'')+'</div>';
+    if(pl.length){
+      if(wfView==='table'){
+        h+='<table class="wtab" style="margin-bottom:20px"><thead><tr><th>Date &amp; Time</th><th>Role &amp; Name</th><th>Remarks</th><th>Action</th><th style="text-align:right">Amount</th></tr></thead><tbody>';
+        pl.forEach(r=>{h+=`<tr><td class="dt">${esc(r.date_time)}</td><td>${esc(r.role_name)}</td><td class="rm">${fmtRemarks(r.remarks||'')}</td><td>${esc(r.action)}</td><td class="amt">${amtOK(r.amount)?inr0(parseAmt(r.amount)):'–'}</td></tr>`;});
+        h+='</tbody></table>';
+      }else{
+        h+='<div class="tl" style="margin-bottom:20px">';
+        pl.forEach(r=>{const cl=/pending|sent back|reject|hold|return/i.test(r.action||'')?' hold':/approv/i.test(r.action||'')?' paid':'';
+          h+=`<div class="step${cl}"><div class="h">${esc(r.action)} · ${esc(r.role_name)} <span class="w">· ${esc(r.date_time)}${amtOK(r.amount)?' · '+inr0(parseAmt(r.amount)):''}</span></div><div class="r">${fmtRemarks(r.remarks||'')}</div></div>`;});
+        h+='</div>';
+      }
+    }
+  }
   h+=`<div class="tlhead"><h3 class="st" style="margin:0">Claim approval timeline</h3>
     <div class="vtog"><button id="vt-tl" class="${wfView==='timeline'?'on':''}">Timeline</button><button id="vt-tb" class="${wfView==='table'?'on':''}">Table</button></div></div>`;
   if(!rows||!rows.length){h+=`<div class="empty" style="padding:20px">${esc(c.workflow_note||'No claim workflow captured yet.')}</div>`;}
