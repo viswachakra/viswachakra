@@ -210,6 +210,8 @@
   .wtab th:nth-child(1),.wtab td:nth-child(1){width:15%}
   .wtab th:nth-child(2),.wtab td:nth-child(2){width:15%}
   .wtab th:nth-child(3),.wtab td:nth-child(3){width:44%}
+  .wtab td.amt,.wtab td.dt{white-space:nowrap;word-break:normal;overflow-wrap:normal}
+  .wtab td.amt{text-align:right}
   .wtab th:nth-child(4),.wtab td:nth-child(4){width:16%}
   .wtab th:nth-child(5),.wtab td:nth-child(5){width:10%}
   .wtab td.dt{color:var(--text-2)}
@@ -1323,11 +1325,11 @@ async function showDetail(caseNo){
   if(!rows||!rows.length){h+=`<div class="empty" style="padding:20px">${esc(c.workflow_note||'No claim workflow captured yet.')}</div>`;}
   else if(wfView==='table'){
     h+=`<table class="wtab"><thead><tr><th>Date &amp; Time</th><th>Role &amp; Name</th><th>Remarks</th><th>Action</th><th style="text-align:right">Amount</th></tr></thead><tbody>`;
-    rows.forEach(r=>{h+=`<tr><td class="dt">${esc(r.date_time)}</td><td>${esc(r.role_name)}</td><td class="rm">${fmtRemarks(r.remarks||'')}</td><td>${esc(r.action)}</td><td class="amt">${amtOK(r.amount)?'₹'+esc(r.amount):'–'}</td></tr>`;});
+    rows.forEach(r=>{h+=`<tr><td class="dt">${esc(r.date_time)}</td><td>${esc(r.role_name)}</td><td class="rm">${fmtRemarks(r.remarks||'')}</td><td>${esc(r.action)}</td><td class="amt">${amtOK(r.amount)?inr0(parseAmt(r.amount)):'–'}</td></tr>`;});
     h+='</tbody></table>';
   }
   else{h+='<div class="tl">';rows.forEach(r=>{const cl=/hold|stopped|reject/i.test(r.action||'')?' hold':/paid|approv/i.test(r.action||'')?' paid':'';
-    h+=`<div class="step${cl}"><div class="h">${esc(r.action)} · ${esc(r.role_name)} <span class="w">· ${esc(r.date_time)}${amtOK(r.amount)?' · ₹'+esc(r.amount):''}</span></div><div class="r">${fmtRemarks(r.remarks||'')}</div></div>`;});h+='</div>';}
+    h+=`<div class="step${cl}"><div class="h">${esc(r.action)} · ${esc(r.role_name)} <span class="w">· ${esc(r.date_time)}${amtOK(r.amount)?' · '+inr0(parseAmt(r.amount)):''}</span></div><div class="r">${fmtRemarks(r.remarks||'')}</div></div>`;});h+='</div>';}
   $('p-body').innerHTML=h;$('overlay').style.display='block';$('panel').classList.add('open');
   const setV=v=>{wfView=v;localStorage.setItem('vc-wfview',v);showDetail(caseNo);};
   if($('vt-tl'))$('vt-tl').onclick=()=>setV('timeline');
