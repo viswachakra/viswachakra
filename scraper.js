@@ -67,12 +67,13 @@ function updateEnvValue(key, value) {
 async function resolveCredentials(log) {
   let user = process.env.VAIDYA_USERNAME;
   let pass = process.env.VAIDYA_PASSWORD;
+  let alt = process.env.VAIDYA_PASSWORD_ALT || null;
   try {
     if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
       const { createClient } = require('@supabase/supabase-js');
       const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
       const { data, error } = await sb.from('app_settings')
-        .select('key,value').in('key', ['vaidya_password', 'vaidya_username']);
+        .select('key,value').in('key', ['vaidya_password', 'vaidya_password_alt', 'vaidya_username']);
       if (!error && data) {
         const map = Object.fromEntries(data.map((r) => [r.key, r.value]));
         if (map.vaidya_username) user = map.vaidya_username;
@@ -83,12 +84,33 @@ async function resolveCredentials(log) {
           }
           pass = map.vaidya_password;
         }
+        if (map.vaidya_password_alt && map.vaidya_password_alt !== pass) alt = map.vaidya_password_alt;
       }
     }
   } catch (e) {
     log('Could not read password from Supabase (using .env): ' + ((e && e.message) || e));
   }
-  return { user, pass };
+  return { user, pass, alt };
+}
+
+// The hospital alternates between two portal passwords. When the primary fails
+// and the alternate logs in, make the alternate the primary so the next run
+// (and the .env fallback) start with the one that works.
+async function promoteAltPassword(log) {
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { data } = await sb.from('app_settings').select('key,value').in('key', ['vaidya_password', 'vaidya_password_alt']);
+    const map = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
+    if (!map.vaidya_password_alt) return;
+    const now = new Date().toISOString();
+    await sb.from('app_settings').upsert([
+      { key: 'vaidya_password', value: map.vaidya_password_alt, updated_at: now, updated_by: 'scraper (swapped)' },
+      { key: 'vaidya_password_alt', value: map.vaidya_password || '', updated_at: now, updated_by: 'scraper (swapped)' },
+    ], { onConflict: 'key' });
+    if (updateEnvValue('VAIDYA_PASSWORD', map.vaidya_password_alt)) log('  .env VAIDYA_PASSWORD synced to the alternate.');
+    log('  Alternate password worked - it is now the primary.');
+  } catch (e) { log('  (could not swap passwords in Supabase: ' + ((e && e.message) || e) + ')'); }
 }
 
 async function login(context, log) {
@@ -97,28 +119,36 @@ async function login(context, log) {
   log('Opening login page...');
   await page.goto(process.env.LOGIN_URL || BASE + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-  const { user, pass } = await resolveCredentials(log);
+  const { user, pass, alt } = await resolveCredentials(log);
   if (!user || !pass || pass === 'PUT_YOUR_PASSWORD_HERE') {
     throw new Error('Set VAIDYA_USERNAME and VAIDYA_PASSWORD (in the web UI Settings tab, or .env) first.');
   }
 
-  await page.locator('input[type="text"]:visible').first().fill(user);
-  await page.locator('input[type="password"]:visible').first().fill(pass);
-  log('Logging in...');
-  await page.locator('button:has-text("Login"), input[value="Login"]').first().click();
-  await page.waitForTimeout(6000);
-
+  const candidates = alt ? [pass, alt] : [pass];
   let dash = null;
-  for (let attempt = 0; attempt < 5 && !dash; attempt++) {
-    for (const p of context.pages()) {
-      const body = (await p.textContent('body').catch(() => '')) || '';
-      if (/Welcome/i.test(body) && /Signout|Sign out/i.test(body)) { dash = p; break; }
+  for (let ci = 0; ci < candidates.length && !dash; ci++) {
+    if (ci > 0) {
+      log('Primary password rejected - trying the alternate...');
+      await page.goto(process.env.LOGIN_URL || BASE + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     }
-    if (!dash) await page.waitForTimeout(3000);
+    await page.locator('input[type="text"]:visible').first().fill(user);
+    await page.locator('input[type="password"]:visible').first().fill(candidates[ci]);
+    log('Logging in...');
+    await page.locator('button:has-text("Login"), input[value="Login"]').first().click();
+    await page.waitForTimeout(6000);
+
+    for (let attempt = 0; attempt < 5 && !dash; attempt++) {
+      for (const p of context.pages()) {
+        const body = (await p.textContent('body').catch(() => '')) || '';
+        if (/Welcome/i.test(body) && /Signout|Sign out/i.test(body)) { dash = p; break; }
+      }
+      if (!dash) await page.waitForTimeout(3000);
+    }
+    if (dash && ci > 0) await promoteAltPassword(log);
   }
   if (!dash) {
     await shot(page, '01-after-login');
-    throw new Error('Login failed - no window with "Welcome" found. See debug/01-after-login.png');
+    throw new Error('Login failed - no window with "Welcome" found' + (alt ? ' (both passwords tried)' : '') + '. See debug/01-after-login.png');
   }
   attachDialogHandler(dash, log);
   log('Logged in OK.');

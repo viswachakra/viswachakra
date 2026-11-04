@@ -419,6 +419,21 @@
       </div>
       <button class="btn" id="set-save" type="button">Update password</button>
       <div id="set-msg" style="font-size:13px;margin-top:14px;display:none;line-height:1.5"></div>
+
+      <h3 style="margin:26px 0 6px;font-size:15px;border-top:1px solid var(--border);padding-top:18px">Alternate password</h3>
+      <p style="font-size:12.5px;color:var(--text-2);line-height:1.55;margin:0 0 12px">
+        The hospital switches between two portal passwords. Keep the second one here: when the first fails, the scraper tries this one and makes it the primary.
+      </p>
+      <div id="set-alt-status" style="font-size:12.5px;color:var(--text-3);margin-bottom:12px">—</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <input id="set-pw-alt" type="password" autocomplete="new-password" placeholder="Enter the alternate portal password" style="flex:1;padding:11px 13px;border:1px solid var(--border-strong);border-radius:9px;font-size:14px;font-family:inherit;background:var(--card);color:var(--text)">
+        <button class="btn ghost" id="set-toggle-alt" type="button" style="flex:0 0 auto;padding:11px 14px">Show</button>
+      </div>
+      <button class="btn" id="set-save-alt" type="button">Update alternate password</button>
+      <div id="set-msg-alt" style="font-size:13px;margin-top:14px;display:none;line-height:1.5"></div>
+
+      <h3 style="margin:26px 0 6px;font-size:15px;border-top:1px solid var(--border);padding-top:18px">Database</h3>
+      <div id="db-size" style="font-size:13px;color:var(--text-2);line-height:1.5">—</div>
       <p style="font-size:11.5px;color:var(--text-3);line-height:1.55;margin:22px 0 0;border-top:1px solid var(--border);padding-top:14px">
         Log into the portal in a browser first to confirm the new password works, then set it here. It's stored write-only (this page can never read it back) and the scraper syncs it into its local <code>.env</code> on the next run.
       </p>
@@ -518,6 +533,32 @@ async function loadSettings(){
       st.textContent='The portal password has not been updated from here yet.';
     }
   }catch(e){ st.textContent=''; }
+  // alternate password status
+  const stA=$('set-alt-status');
+  if(stA){
+    try{
+      const {data}=await sb.from('app_settings').select('value,updated_at').eq('key','vaidya_password_alt_meta').maybeSingle();
+      if(data&&data.updated_at){
+        const d=new Date(data.updated_at);
+        stA.innerHTML='Alternate password last updated <b>'+esc(d.toLocaleString('en-IN'))+'</b>'+(data.value?(' by '+esc(data.value)):'');
+      }else stA.textContent='No alternate password set yet.';
+    }catch(e){ stA.textContent=''; }
+  }
+  // database size (db_size() in supabase-password-alt.sql); free plan is 500 MB
+  const sz=$('db-size');
+  if(sz){
+    try{
+      const {data,error}=await sb.rpc('db_size');
+      if(error)throw error;
+      const mb=b=>(b/1048576).toFixed(1)+' MB';
+      const total=(data||[]).find(r=>r.name==='database');
+      const tables=(data||[]).filter(r=>r.name!=='database').slice(0,6);
+      const pct=total?Math.min(100,Math.round(total.bytes/(500*1048576)*100)):0;
+      sz.innerHTML=(total?'<b>'+mb(total.bytes)+'</b> of 500 MB used ('+pct+'%)':'—')
+        +'<div style="height:8px;background:var(--border);border-radius:4px;margin:8px 0 10px;overflow:hidden"><div style="width:'+pct+'%;height:100%;background:'+(pct>80?'var(--red-fg)':'var(--green-fg)')+'"></div></div>'
+        +tables.map(r=>'<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-2)"><span>'+esc(r.name)+'</span><span>'+mb(r.bytes)+'</span></div>').join('');
+    }catch(e){ sz.textContent='Database size unavailable — run supabase-password-alt.sql to enable (db_size).'; }
+  }
 }
 function wireSettings(){
   const pw=$('set-pw'),tog=$('set-toggle'),save=$('set-save'),msg=$('set-msg');
@@ -540,6 +581,26 @@ function wireSettings(){
     }catch(e){
       msg.style.color='var(--red-fg)';msg.textContent='Could not save: '+(e.message||e);
     }finally{ save.disabled=false;save.textContent=label; }
+  };
+
+  // alternate password: same flow, its own RPC (see supabase-password-alt.sql)
+  const pwA=$('set-pw-alt'),togA=$('set-toggle-alt'),saveA=$('set-save-alt'),msgA=$('set-msg-alt');
+  togA.onclick=()=>{const show=pwA.type==='password';pwA.type=show?'text':'password';togA.textContent=show?'Hide':'Show';pwA.focus();};
+  pwA.addEventListener('keydown',e=>{if(e.key==='Enter')saveA.click();});
+  saveA.onclick=async()=>{
+    const val=pwA.value.trim();
+    msgA.style.display='block';
+    if(!val){msgA.style.color='var(--red-fg)';msgA.textContent='Enter the alternate password first.';return;}
+    saveA.disabled=true;const label=saveA.textContent;saveA.textContent='Saving…';
+    try{
+      const {error}=await sb.rpc('set_portal_password_alt',{new_password:val});
+      if(error)throw error;
+      pwA.value='';pwA.type='password';togA.textContent='Show';
+      msgA.style.color='var(--green-fg)';msgA.textContent='✓ Alternate password saved. The scraper falls back to it when the primary fails.';
+      loadSettings();
+    }catch(e){
+      msgA.style.color='var(--red-fg)';msgA.textContent='Could not save: '+(e.message||e);
+    }finally{ saveA.disabled=false;saveA.textContent=label; }
   };
 }
 
