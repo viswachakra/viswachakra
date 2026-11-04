@@ -603,10 +603,9 @@ function alCard(title,sub,rows,cls,head,rowFn,id){
 }
 const alWho=c=>'<td><div class="who">'+esc(c.patient_name||'(no name)')+'</div><div class="meta">'+esc(alCaseShort(c))+'</div></td>';
 function alDots(c){
-  // one dot per ward day from admission (status_date of PPD Approved) to today; the last is today
-  const n=Math.max(1,Math.min(21,(c.notes_count||0)+(alNotesMissing(c)?1:0)));
-  let s='';for(let i=0;i<n;i++)s+='<i class="'+(i===n-1&&alNotesMissing(c)?'t':'')+'"></i>';
-  return '<div class="al-dots">'+s+'</div>';
+  // plain words beat a dot strip: what is known, and what is missing today
+  if(!c.notes_count)return '<span class="al-r">Today missing</span><div class="meta">no notes scraped yet</div>';
+  return '<span class="al-r">Today missing</span><div class="meta">'+c.notes_count+' day'+(c.notes_count>1?'s':'')+' posted · last '+esc(c.notes_last_date||'')+'</div>';
 }
 
 async function loadAlerts(){
@@ -640,8 +639,8 @@ async function loadAlerts(){
     const overdue=live.filter(x=>x.left!=null&&x.left<0);
     const preCount=queries.filter(c=>alQuery(c)==='preauth').length;
     const S={};
-    S.notes={cls:'red',l:'NOTES MISSING TODAY',v:notes.length,s:'of '+ward.length+' admitted',html:()=>alCard('Clinical notes missing','No note posted today for admitted patients',notes,'r','<th>Patient</th><th>Status</th><th>Notes</th>',
-      c=>alWho(c)+'<td class="meta">'+esc(c.claim_status||'')+'<br>'+(c.notes_count?c.notes_count+' posted · last '+esc(c.notes_last_date):'no notes yet')+'</td><td>'+alDots(c)+'</td>','al-notes')};
+    S.notes={cls:'red',l:'NOTES MISSING TODAY',v:notes.length,s:'of '+ward.length+' admitted',html:()=>alCard('Clinical notes missing','No note posted today for admitted patients',notes,'r','<th>Patient</th><th>Status</th><th>Clinical notes</th>',
+      c=>alWho(c)+'<td class="meta">'+esc(c.claim_status||'')+'</td><td>'+alDots(c)+'</td>','al-notes')};
     S.queries={cls:'red',l:'TRUST QUERIES OPEN',v:queries.length,s:preCount+' preauth · '+(queries.length-preCount)+' claim',html:()=>alCard('Trust asked a question','Reply or the case stalls',queries,'r','<th>Patient</th><th>Stage · question</th><th>Asked</th><th>Reply by</th>',
       c=>{const kind=alQuery(c);let asked=null,what='';
         if(kind==='preauth'){const r=preLast[c.case_no];asked=r?parseWfDate(r.date_time):null;what='Preauth · '+esc((r&&(r.role_name+' "'+r.action+'"'))||c.preauth_status||'pending');}
