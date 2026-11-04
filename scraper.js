@@ -4,7 +4,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const { upsertCase, replaceWorkflowForCase, startRun, finishRun } = require('./db');
+const { upsertCase, replaceWorkflowForCase, replacePreauthForCase, replaceNotesForCase, startRun, finishRun } = require('./db');
 const { db } = require('./db');
 const { computeSummary } = require('./push-to-supabase');
 
@@ -395,6 +395,90 @@ async function scrapeCaseDetails(page) {
   });
 }
 
+
+// The case page's tabs are driven by page JS, not links: Pre Auth Details is
+// getPreAuth('1') and Clinical Notes is fn_getClinicData('2','PRE'). Each loads
+// its content into the detail iframe, so the table is looked for in every frame.
+async function _callTab(page, js) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const ok = await page.evaluate((code) => { try { eval(code); return true; } catch (e) { return false; } }, js).catch(() => false);
+    if (ok) return true;
+    await page.waitForTimeout(2000);
+  }
+  return false;
+}
+const _cleanCell = (td) => {
+  const clone = td.cloneNode(true);
+  clone.querySelectorAll('script, style').forEach((x) => x.remove());
+  return (clone.textContent || '').trim().replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n');
+};
+
+/// Preauth-stage workflow: same five columns as the claim workflow, but it lives
+/// in the frame whose body says "Preauth Details" (the claim frame has the same header).
+async function scrapePreauthWorkflow(page, log) {
+  if (!await _callTab(page, "getPreAuth('1')")) return { rows: [], note: 'Pre Auth tab not available' };
+  await page.waitForTimeout(5000);
+  const extract = () => {
+    if (!/Preauth Details/i.test(document.body.textContent || '')) return null;
+    const tables = Array.from(document.querySelectorAll('table')).filter((t) => {
+      const r = t.rows && t.rows[0];
+      return r && /Date\s*&\s*Time/i.test(r.textContent || '') && /Role\s*&\s*Name/i.test(r.textContent || '');
+    });
+    const wf = tables[tables.length - 1];
+    if (!wf) return null;
+    const clean = (td) => { const c = td.cloneNode(true); c.querySelectorAll('script, style').forEach((x) => x.remove()); return (c.textContent || '').trim().replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n'); };
+    const rows = Array.from(wf.rows).slice(1).map((tr) => {
+      const cells = Array.from(tr.cells).map(clean);
+      if (cells.length < 5) return null;
+      return { date_time: cells[0], role_name: cells[1], remarks: cells[2], action: cells[3], amount: cells[4] };
+    }).filter(Boolean);
+    return { rows, note: '' };
+  };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    for (const frame of page.frames()) {
+      const r = await frame.evaluate(extract).catch(() => null);
+      if (r && r.rows.length) return r;
+    }
+    await page.waitForTimeout(3000);
+  }
+  return { rows: [], note: 'preauth table not found' };
+}
+
+/// Daily clinical notes: one row per day. Only admitted (and discharged) patients
+/// have any; an empty result is normal for a case that never reached a ward.
+async function scrapeClinicalNotes(page, log) {
+  if (!await _callTab(page, "fn_getClinicData('2','PRE')")) return { rows: [], note: 'Clinical Notes tab not available' };
+  await page.waitForTimeout(5000);
+  const extract = () => {
+    const tables = Array.from(document.querySelectorAll('table')).filter((t) => {
+      const r = t.rows && t.rows[0];
+      const h = r ? (r.textContent || '').replace(/\s+/g, ' ') : '';
+      return /Clinical\s*Id/i.test(h) && /Progress Notes/i.test(h);
+    });
+    // prefer the inner table by id - a wrapper table also matches on text
+    const t = document.getElementById('prentstable') || tables[tables.length - 1];
+    if (!t) return null;
+    const clean = (td) => { const c = td.cloneNode(true); c.querySelectorAll('script, style').forEach((x) => x.remove()); return (c.textContent || '').trim().replace(/\s+/g, ' '); };
+    const head = Array.from(t.rows[0].cells).map(clean);
+    const ix = (re) => head.findIndex((h) => re.test(h));
+    const iId = ix(/Clinical\s*Id/i), iDate = ix(/^Date$/i), iWard = ix(/Ward/i), iNotes = ix(/Progress Notes/i);
+    const rows = Array.from(t.rows).slice(1).map((tr) => {
+      const c = Array.from(tr.cells).map(clean);
+      if (!c[iId] || !/^CC\d+/.test(c[iId])) return null;
+      return { clinical_id: c[iId], note_date: c[iDate] || '', ward_type: iWard >= 0 ? (c[iWard] || '') : '', progress_notes: iNotes >= 0 ? (c[iNotes] || '') : '' };
+    }).filter(Boolean);
+    return { rows, note: '' };
+  };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    for (const frame of page.frames()) {
+      const r = await frame.evaluate(extract).catch(() => null);
+      if (r) return r;
+    }
+    await page.waitForTimeout(3000);
+  }
+  return { rows: [], note: 'no clinical notes table' };
+}
+
 async function scrapeClaimWorkflow(page, log) {
   // wait for the Claim tab to appear, then click it (retry a few times - the tab strip loads late)
   let tabClicked = false;
@@ -534,6 +618,8 @@ async function runSync(opts = {}) {
         }
         const details = await scrapeCaseDetails(page);
         const wf = await scrapeClaimWorkflow(page, log);
+        const pre = await scrapePreauthWorkflow(page, log);
+        const notes = await scrapeClinicalNotes(page, log);
 
         upsertCase.run({
           case_no: c.case_no, claim_no: details.claim_no || c.claim_no,
@@ -548,8 +634,10 @@ async function runSync(opts = {}) {
           last_synced: new Date().toISOString(),
         });
         if (wf.rows.length) replaceWorkflowForCase(c.case_no, wf.rows);
+        if (pre.rows.length) replacePreauthForCase(c.case_no, pre.rows);
+        replaceNotesForCase(c.case_no, notes.rows);
         deepScraped++;
-        log(`  saved (${wf.rows.length} workflow rows)${wf.note ? ' - ' + wf.note : ''}`);
+        log(`  saved (${wf.rows.length} claim, ${pre.rows.length} preauth, ${notes.rows.length} notes)${wf.note ? ' - ' + wf.note : ''}`);
 
         // back to the results list
         const backOk = await page.evaluate(() => {
@@ -614,6 +702,8 @@ async function rescrapeCases(caseNos, opts = {}) {
         if (!opened) { log('  page did not load'); stillMissing++; continue; }
         const details = await scrapeCaseDetails(page);
         const wf = await scrapeClaimWorkflow(page, log);
+        const pre = await scrapePreauthWorkflow(page, log);
+        const notes = await scrapeClinicalNotes(page, log);
         upsertCase.run({
           case_no: caseNo, claim_no: details.claim_no || '', patient_name: '',
           card_no: details.card_no || '', district: details.district, mandal: details.mandal,
@@ -626,8 +716,10 @@ async function rescrapeCases(caseNos, opts = {}) {
           last_synced: new Date().toISOString(),
         });
         if (wf.rows.length) replaceWorkflowForCase(caseNo, wf.rows);
-        if (wf.rows.length) fixed++; else stillMissing++;
-        log(`  saved (${wf.rows.length} workflow rows)${wf.note ? ' - ' + wf.note : ''}`);
+        if (pre.rows.length) replacePreauthForCase(caseNo, pre.rows);
+        replaceNotesForCase(caseNo, notes.rows);
+        if (wf.rows.length || pre.rows.length) fixed++; else stillMissing++;
+        log(`  saved (${wf.rows.length} claim, ${pre.rows.length} preauth, ${notes.rows.length} notes)${wf.note ? ' - ' + wf.note : ''}`);
       } catch (e) {
         log(`  ERROR: ${e.message}`);
         stillMissing++;
@@ -837,7 +929,7 @@ async function scrapeCaseWorkflows(caseNos, opts = {}) {
 }
 
 module.exports = {
-  runSync, rescrapeCases, fmt, countRanges, listRanges, scrapeCaseWorkflows,
+  runSync, rescrapeCases, scrapePreauthWorkflow, scrapeClinicalNotes, fmt, countRanges, listRanges, scrapeCaseWorkflows,
   // Lower-level steps, so a read-only audit can walk the portal itself without
   // going through runSync (which writes to SQLite). Used by
   // verify-against-portal.js.

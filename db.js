@@ -104,6 +104,50 @@ const replaceWorkflowForCase = db.transaction((caseNo, rows) => {
   rows.forEach((r, i) => ins.run(caseNo, i, r.date_time, r.role_name, r.remarks, r.action, r.amount));
 });
 
+// Preauth-stage workflow (the case page's "Pre Auth Details" tab) and the daily
+// clinical notes ("Clinical Notes" tab). Added 2026-11 for the doctor's alerts:
+// preauth queries, preauth-vs-final amount, and patients missing today's notes.
+db.exec(`
+CREATE TABLE IF NOT EXISTS preauth_workflow (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no   TEXT NOT NULL,
+  row_index INTEGER NOT NULL,
+  date_time TEXT,
+  role_name TEXT,
+  remarks   TEXT,
+  action    TEXT,
+  amount    TEXT,
+  UNIQUE (case_no, row_index)
+);
+CREATE TABLE IF NOT EXISTS clinical_notes (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_no        TEXT NOT NULL,
+  clinical_id    TEXT NOT NULL,
+  note_date      TEXT,
+  ward_type      TEXT,
+  progress_notes TEXT,
+  UNIQUE (case_no, clinical_id)
+);
+CREATE INDEX IF NOT EXISTS idx_preauth_case ON preauth_workflow (case_no);
+CREATE INDEX IF NOT EXISTS idx_notes_case ON clinical_notes (case_no);
+`);
+
+const replacePreauthForCase = db.transaction((caseNo, rows) => {
+  db.prepare('DELETE FROM preauth_workflow WHERE case_no = ?').run(caseNo);
+  const ins = db.prepare(`
+    INSERT INTO preauth_workflow (case_no, row_index, date_time, role_name, remarks, action, amount)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  rows.forEach((r, i) => ins.run(caseNo, i, r.date_time, r.role_name, r.remarks, r.action, r.amount));
+});
+
+const replaceNotesForCase = db.transaction((caseNo, rows) => {
+  db.prepare('DELETE FROM clinical_notes WHERE case_no = ?').run(caseNo);
+  const ins = db.prepare(`
+    INSERT OR REPLACE INTO clinical_notes (case_no, clinical_id, note_date, ward_type, progress_notes)
+    VALUES (?, ?, ?, ?, ?)`);
+  rows.forEach((r) => ins.run(caseNo, r.clinical_id, r.note_date, r.ward_type, r.progress_notes));
+});
+
 const startRun = (fromDt, toDt) =>
   db.prepare(`INSERT INTO sync_runs (started_at, status, from_dt, to_dt) VALUES (?, 'running', ?, ?)`)
     .run(new Date().toISOString(), fromDt, toDt).lastInsertRowid;
@@ -112,4 +156,4 @@ const finishRun = (id, status, totalFound, deepScraped, message) =>
   db.prepare(`UPDATE sync_runs SET finished_at = ?, status = ?, total_found = ?, deep_scraped = ?, message = ? WHERE id = ?`)
     .run(new Date().toISOString(), status, totalFound, deepScraped, message || '', id);
 
-module.exports = { db, upsertCase, replaceWorkflowForCase, startRun, finishRun };
+module.exports = { db, upsertCase, replaceWorkflowForCase, replacePreauthForCase, replaceNotesForCase, startRun, finishRun };

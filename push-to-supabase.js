@@ -39,6 +39,33 @@ function computeSummary(rows){
   };
 }
 
+// ---- preauth-stage summary (from the Pre Auth Details tab) ----
+// preauth_amount    : the amount on the Trust's approval row (PPD "Approved 40000")
+// preauth_status    : the last action on the preauth workflow
+// preauth_query_open: the last row is a Trust-side hold/pending/sent-back, i.e.
+//                     the Trust is waiting on the hospital (doctor's item 1)
+const HOSPITAL_ROLE = /MEDCO|NWH|DRC\b/i;
+function computePreauth(rows) {
+  rows = [...rows].sort((a, b) => a.row_index - b.row_index);
+  if (!rows.length) return {};
+  const last = rows[rows.length - 1];
+  const appr = [...rows].reverse().find((r) => /approv/i.test(r.action || '') && parseAmt(r.amount) > 0);
+  const queryOpen = !HOSPITAL_ROLE.test(last.role_name || '') &&
+    /pending|sent back|query|return|hold|clarif/i.test((last.action || '') + ' ' + (last.remarks || '').slice(0, 40));
+  return {
+    preauth_amount: appr ? parseAmt(appr.amount) : null,
+    preauth_status: last.action || null,
+    preauth_query_open: !!queryOpen,
+  };
+}
+// ---- clinical notes summary ----
+function computeNotes(rows) {
+  if (!rows.length) return { notes_last_date: null, notes_count: 0 };
+  const key = (d) => { const m = String(d || '').match(/(\d{2})\/(\d{2})\/(\d{4})/); return m ? m[3] + m[2] + m[1] : ''; };
+  const latest = rows.reduce((a, r) => (key(r.note_date) > key(a) ? r.note_date : a), rows[0].note_date);
+  return { notes_last_date: latest, notes_count: rows.length };
+}
+
 async function chunkedUpsert(supabase, table, rows, conflictCol, chunk = 500) {
   for (let i = 0; i < rows.length; i += chunk) {
     const slice = rows.slice(i, i + chunk);
@@ -63,16 +90,22 @@ async function main() {
 
   // optional: only push rows synced in the last N minutes (used for incremental per-chunk pushes)
   const sinceMin = arg('since-minutes') ? parseInt(arg('since-minutes'), 10) : null;
-  let cases, workflow;
+  let cases, workflow, preauth, notes;
+  const PRE_SQL = 'SELECT case_no, row_index, date_time, role_name, remarks, action, amount FROM preauth_workflow';
+  const NOTES_SQL = 'SELECT case_no, clinical_id, note_date, ward_type, progress_notes FROM clinical_notes';
   if (sinceMin) {
     const cutoff = new Date(Date.now() - sinceMin * 60 * 1000).toISOString();
     cases = db.prepare('SELECT * FROM cases WHERE last_synced > ?').all(cutoff);
     const caseNos = new Set(cases.map((c) => c.case_no));
     workflow = db.prepare('SELECT case_no, row_index, date_time, role_name, remarks, action, amount FROM claim_workflow').all()
       .filter((w) => caseNos.has(w.case_no));
+    preauth = db.prepare(PRE_SQL).all().filter((w) => caseNos.has(w.case_no));
+    notes = db.prepare(NOTES_SQL).all().filter((w) => caseNos.has(w.case_no));
   } else {
     cases = db.prepare('SELECT * FROM cases').all();
     workflow = db.prepare('SELECT case_no, row_index, date_time, role_name, remarks, action, amount FROM claim_workflow').all();
+    preauth = db.prepare(PRE_SQL).all();
+    notes = db.prepare(NOTES_SQL).all();
   }
   // sync_runs mirror: keep ONLY today's runs (Sync History shows just today). Runs on EVERY
   // push — even "nothing new" or a failed scrape — so failures always get recorded.
@@ -90,6 +123,12 @@ async function main() {
   const byCase = {};
   workflow.forEach((w) => { (byCase[w.case_no] = byCase[w.case_no] || []).push(w); });
   for (const c of cases) Object.assign(c, computeSummary(byCase[c.case_no] || []));
+  const preBy = {}; preauth.forEach((r) => { (preBy[r.case_no] = preBy[r.case_no] || []).push(r); });
+  const notesBy = {}; notes.forEach((r) => { (notesBy[r.case_no] = notesBy[r.case_no] || []).push(r); });
+  for (const c of cases) {
+    if (preBy[c.case_no]) Object.assign(c, computePreauth(preBy[c.case_no]));
+    if (notesBy[c.case_no]) Object.assign(c, computeNotes(notesBy[c.case_no]));
+  }
 
   // Never overwrite a populated Supabase value with a blank local one.
   //
@@ -128,6 +167,13 @@ async function main() {
   // claim_workflow: unique (case_no, row_index). Replace all rows for the cases we have,
   // then upsert - simplest correct approach for a full push.
   await chunkedUpsert(supabase, 'claim_workflow', workflow, 'case_no,row_index');
+  // the two tab tables exist only after supabase-preauth-clinical.sql has been run;
+  // until then say so and carry on rather than failing the whole push
+  for (const [table, rows, key] of [['preauth_workflow', preauth, 'case_no,row_index'], ['clinical_notes', notes, 'case_no,clinical_id']]) {
+    if (!rows.length) continue;
+    try { await chunkedUpsert(supabase, table, rows, key); }
+    catch (e) { console.log(`  (${table} not pushed: ${e.message.split('\n')[0]} - run supabase-preauth-clinical.sql)`); }
+  }
 
   console.log('Done. Supabase is up to date.');
 }
@@ -135,7 +181,7 @@ async function main() {
 // Exported so other push scripts derive amounts with EXACTLY this logic rather
 // than reimplementing it - a second, drifting copy of computeSummary is how
 // claimed_amount got corrupted before.
-module.exports = { computeSummary, chunkedUpsert, parseAmt, parseWfDate };
+module.exports = { computeSummary, computePreauth, computeNotes, chunkedUpsert, parseAmt, parseWfDate };
 
 if (require.main === module) {
   main().catch((e) => { console.error('Push failed:', e.message); process.exit(1); });
