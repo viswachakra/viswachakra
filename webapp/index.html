@@ -155,6 +155,7 @@
   .al-more{padding:9px 16px;color:var(--primary);font-size:12px;border-top:1px solid var(--border);cursor:pointer;font-weight:600}
   .al-empty{padding:16px;color:var(--text-3);font-size:12.5px}
   .al-pipe{display:flex;gap:8px;margin-bottom:12px}.al-pipe .card{flex:1;text-align:center;padding:14px 8px}.al-pipe .v{font-size:24px;font-weight:800}.al-pipe small{display:block;font-size:11px;color:var(--text-3);margin-top:2px}.al-pipe .arrow{align-self:center;color:var(--text-3);font-size:20px}
+  .al-notice{background:var(--amber-bg);color:var(--amber-fg);border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;line-height:1.5}.al-notice b{display:block;font-size:11px;letter-spacing:.4px;margin-bottom:3px}
   .al-money{padding:14px 16px}.al-money .big{font-size:26px;font-weight:800;color:var(--red-fg)}.al-money .l{font-size:10.5px;letter-spacing:.5px;color:var(--text-3);font-weight:700}
   .al-bar{height:8px;background:var(--border);border-radius:4px;margin:10px 0 4px;overflow:hidden}.al-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--red-fg),#c9a227)}
   .al-dots{display:flex;gap:3px;flex-wrap:wrap}.al-dots i{width:10px;height:10px;border-radius:50%;background:var(--green-fg);display:inline-block}.al-dots i.t{background:var(--amber-fg)}.al-dots i.x{background:var(--red-fg)}
@@ -260,6 +261,7 @@
   <!-- ===== Alerts: the doctor's morning screen (his nine requirements, 2026-11) ===== -->
   <main id="view-alerts" style="display:none">
     <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span></div>
+    <div id="al-notices" style="display:none"></div>
     <div id="al-loading" class="empty">Loading…</div>
     <div id="al-content" style="display:none">
       <!-- the tiles ARE the navigation: one list shows at a time underneath -->
@@ -522,6 +524,14 @@ async function loadAlerts(){
     $('al-fresh').textContent=ageH==null?'':(ageH<1.5?'● Up to date — synced '+Math.max(1,Math.round(ageH*60))+' min ago':'● Data is '+(ageH<48?Math.round(ageH)+' hours':Math.round(ageH/24)+' days')+' old');
     $('al-fresh').className='al-fresh'+(ageH!=null&&ageH>3?' stale':'');
 
+    // notices the portal shows at login (scraper stores them each hour)
+    try{
+      const {data:pn}=await sb.from('app_settings').select('value,updated_at').eq('key','portal_notices').maybeSingle();
+      const box=$('al-notices');
+      if(pn&&pn.value){const p=JSON.parse(pn.value);const list=(p.notices||[]).filter(t=>/renew|expir|deadline|suspend|mandatory|required|blocked|cancel/i.test(t));
+        if(list.length){box.innerHTML='<div class="al-notice"><b>PORTAL NOTICE · seen at login '+esc(new Date(p.at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}))+'</b>'+list.map(t=>esc(t)).join('<br>')+'</div>';box.style.display='block';}
+        else box.style.display='none';}
+    }catch(e){}
     const ward=all.filter(alInWard);
     // the portal's own list ("Cases for which Clinical Notes is not Updated today"),
     // captured by the scraper at every login - authoritative when it is from today

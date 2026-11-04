@@ -51,11 +51,28 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(DEBUG_DIR, name + '.png'), fullPage: true }).catch(() => {});
 }
 
+// Every dialog the portal throws (there can be several per login: scheme
+// notices, the hospital's renewal deadline...). Dismissed so the scraper can
+// proceed, but the texts are kept and stored after login - a renewal deadline
+// is something the doctor must see.
+const _notices = [];
 function attachDialogHandler(page, log) {
   page.on('dialog', async (d) => {
-    log('  [popup] ' + d.message().slice(0, 120) + ' -> OK');
+    const msg = (d.message() || '').replace(/\s+/g, ' ').trim();
+    log('  [popup] ' + msg.slice(0, 120) + ' -> OK');
+    if (msg && !_notices.includes(msg)) _notices.push(msg);
     await d.accept().catch(() => {});
   });
+}
+async function storeNotices(log) {
+  if (!_notices.length || !process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return;
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const value = JSON.stringify({ at: new Date().toISOString(), notices: _notices.slice(0, 20) });
+    await sb.from('app_settings').upsert({ key: 'portal_notices', value, updated_at: new Date().toISOString(), updated_by: 'scraper' }, { onConflict: 'key' });
+    log('  portal notices stored: ' + _notices.length);
+  } catch (e) { log('  (could not store notices: ' + e.message + ')'); }
 }
 
 // Update a single KEY=value line in the local .env (keeps it current when the password
@@ -165,6 +182,7 @@ async function login(context, log) {
   attachDialogHandler(dash, log);
   log('Logged in OK.');
   await captureNotesPopup(context, log).catch((e) => log('  (popup capture failed: ' + e.message + ')'));
+  await storeNotices(log);
   return dash;
 }
 
