@@ -552,6 +552,9 @@ async function loadAlerts(){
     const dueSoon=file.filter(x=>x.left!=null&&x.left>=0&&x.left<=CLAIM_WARN);
 
     // when was each preauth query asked? (last row of its preauth workflow)
+    // real surgery dates for the discharge-pending list (from the preauth workflow)
+    const surgDate={};
+    if(disch.length){const {data:sd}=await sb.from('preauth_workflow').select('case_no,date_time,action').in('case_no',disch.map(c=>c.case_no).slice(0,300)).ilike('action','%surgery%');(sd||[]).forEach(r=>{const d=parseWfDate(r.date_time);if(d&&(!surgDate[r.case_no]||d>surgDate[r.case_no]))surgDate[r.case_no]=d;});}
     const preIds=queries.filter(c=>alQuery(c)==='preauth').map(c=>c.case_no);
     const preLast={};
     if(preIds.length){const {data}=await sb.from('preauth_workflow').select('case_no,row_index,date_time,role_name,action').in('case_no',preIds.slice(0,300));(data||[]).forEach(r=>{if(!preLast[r.case_no]||r.row_index>preLast[r.case_no].row_index)preLast[r.case_no]=r;});}
@@ -573,7 +576,7 @@ async function loadAlerts(){
         const dueTxt=kind==='preauth'?'<span class="al-r">Today</span>':(left==null?'–':left<0?'<span class="al-r">Overdue '+(-left)+' d</span>':left<=2?'<span class="al-r">'+left+' days</span>':'<span class="al-a">'+left+' days</span>');
         return alWho(c)+'<td>'+what+'</td><td>'+esc(alAgo(asked))+'</td><td>'+dueTxt+'</td>';},'al-queries')};
     S.discharge={cls:'amber',l:'DISCHARGE PENDING',v:disch.length,s:'surgery done, not posted',html:()=>alCard('Discharge update pending','Surgery done, no discharge posted',disch,'a','<th>Patient</th><th>Surgery</th><th>Since</th>',
-      c=>{const d=parseCaseDate(c.status_date);const n=d?alDays(d,now):null;return alWho(c)+'<td>'+esc(ddMon(d))+'</td><td class="'+(n!=null&&n>=5?'al-a':'al-m')+'">'+(n==null?'–':n+' days')+'</td>';},'al-discharge')};
+      c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);const n=d?alDays(d,now):null;return alWho(c)+'<td>'+esc(ddMon(d))+'</td><td class="'+(n!=null&&n>=5?'al-a':'al-m')+'">'+(n==null?'–':n+' days')+'</td>';},'al-discharge')};
     S.file={cls:'amber',l:'CLAIMS TO FILE',v:live.length,s:dueSoon.length+' due in '+CLAIM_WARN+' days · '+overdue.length+' overdue',html:()=>alCard('Discharged — claim to file','Window opens '+CLAIM_OPENS+' days after discharge, closes at '+CLAIM_CLOSES,live,'a','<th>Patient</th><th>Discharged</th><th>Window</th><th>Status</th>',
       x=>{const st=x.left==null?'–':x.opens>now?'<span class="al-m">Opens '+esc(ddMon(x.opens))+'</span>':x.left<0?'<span class="al-r">OVERDUE '+(-x.left)+' d — check auto-cancel</span>':x.left===0?'<span class="al-r">Today — last day</span>':'<span class="'+(x.left<=CLAIM_WARN?'al-r':'al-m')+'">'+x.left+' days left</span>';
         return alWho(x.c)+'<td>'+esc(ddMon(x.d))+'</td><td>'+esc(ddMon(x.opens))+' – '+esc(ddMon(x.closes))+'</td><td>'+st+'</td>';},'al-file')
@@ -1242,7 +1245,8 @@ async function showDetail(caseNo){
   $('p-title').textContent=c.case_no||caseNo;$('p-sub').textContent=(c.patient_name||'')+(c.nwh_name?' · '+c.nwh_name:'');
   const info=[['Claim no',c.claim_no],['Card no',c.card_no],['District',c.district],['Mandal',c.mandal],['Village',c.village],['Contact',c.contact_no],['IP no',c.ip_no],['IP registration',c.ip_registration_dt],['Category',c.category],['Procedure',c.procedure_name]];
   let h='<div class="info">'+info.map(([k,v])=>`<div><div class="k">${k}</div><div class="val">${esc(v)||'–'}</div></div>`).join('')+'</div>';
-  h+=`<div style="margin-bottom:20px"><span class="${badge(c.claim_status)}" style="max-width:none">${esc(c.claim_status||c.case_status||'–')}</span></div>`;
+  h+=`<div class="tlhead" style="margin-bottom:20px"><span class="${badge(c.claim_status)}" style="max-width:none">${esc(c.claim_status||c.case_status||'–')}</span>
+    <div class="vtog"><button id="vt-tl" class="${wfView==='timeline'?'on':''}">Timeline</button><button id="vt-tb" class="${wfView==='table'?'on':''}">Table</button></div></div>`;
   // ---- clinical notes: one line per ward day; today highlighted when missing ----
   const nl=(notes||[]).slice().sort((a,b)=>(parseCaseDate(b.note_date)||0)-(parseCaseDate(a.note_date)||0));
   const todayStr=fmtD(new Date()), inWard=!c.is_paid&&/Preauthorisation PPD Approved|^Surgery Update/i.test(c.claim_status||'');
@@ -1277,8 +1281,7 @@ async function showDetail(caseNo){
       }
     }
   }
-  h+=`<div class="tlhead"><h3 class="st" style="margin:0">Claim approval timeline</h3>
-    <div class="vtog"><button id="vt-tl" class="${wfView==='timeline'?'on':''}">Timeline</button><button id="vt-tb" class="${wfView==='table'?'on':''}">Table</button></div></div>`;
+  h+=`<div class="tlhead"><h3 class="st" style="margin:0">Claim approval timeline</h3></div>`;
   if(!rows||!rows.length){h+=`<div class="empty" style="padding:20px">${esc(c.workflow_note||'No claim workflow captured yet.')}</div>`;}
   else if(wfView==='table'){
     h+=`<table class="wtab"><thead><tr><th>Date &amp; Time</th><th>Role &amp; Name</th><th>Remarks</th><th>Action</th><th style="text-align:right">Amount</th></tr></thead><tbody>`;
