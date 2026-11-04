@@ -5,6 +5,21 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 const { upsertCase, replaceWorkflowForCase, startRun, finishRun } = require('./db');
+const { db } = require('./db');
+const { computeSummary } = require('./push-to-supabase');
+
+// A claim that is PAID and was paid IN FULL is closed: nothing on it will ever
+// change again, so re-opening its page and workflow every run is wasted portal
+// time - and portal time is the scarce resource (one session per account).
+// Decided from the workflow rows we already hold; a case we have never
+// deep-scraped has no rows and is always scraped once. --force overrides.
+const _wfRows = db.prepare('SELECT row_index, date_time, role_name, remarks, action, amount FROM claim_workflow WHERE case_no = ?');
+function settledInFull(caseNo) {
+  const rows = _wfRows.all(caseNo);
+  if (!rows.length) return false;
+  const s = computeSummary(rows);
+  return s.is_paid && (s.claimed_amount || 0) > 0 && (s.deduction || 0) === 0;
+}
 
 const BASE = 'https://app.drntrvaidyaseva.ap.gov.in/ASRI';
 const DEBUG_DIR = path.join(__dirname, 'debug');
@@ -423,6 +438,7 @@ async function runSync(opts = {}) {
   const runId = startRun(fromStr, toStr);
   let totalFound = 0;
   let deepScraped = 0;
+  let skippedSettled = 0;
 
   let browser = null, page = null;
   async function fresh() {
@@ -477,6 +493,7 @@ async function runSync(opts = {}) {
       const c = toVisit[i];
       if (i > 0 && i % 25 === 0) { log('  [proactive re-login after 25 cases]'); try { await freshResilient(); await reopenSearch(); } catch (e) {} }
       log(`[${i + 1}/${toVisit.length}] Case ${c.case_no}...`);
+      if (!opts.force && settledInFull(c.case_no)) { skippedSettled++; log('  paid in full already - list row refreshed, not re-opened'); continue; }
       try {
         const opened = await openCaseByText(page, c.case_no);
         if (!opened) {
@@ -527,7 +544,7 @@ async function runSync(opts = {}) {
     }
 
     finishRun(runId, 'success', totalFound, deepScraped, '');
-    log(`=== Sync done: ${totalFound} found, ${deepScraped} deep-scraped ===`);
+    log(`=== Sync done: ${totalFound} found, ${deepScraped} deep-scraped, ${skippedSettled} paid-in-full skipped ===`);
     return { runId, totalFound, deepScraped };
   } catch (err) {
     finishRun(runId, 'failed', totalFound, deepScraped, err.message);
@@ -560,6 +577,7 @@ async function rescrapeCases(caseNos, opts = {}) {
       const caseNo = caseNos[i];
       if (i > 0) await page.waitForTimeout(2500); // be gentle on the legacy portal
       log(`[${i + 1}/${caseNos.length}] ${caseNo}...`);
+      if (!opts.force && settledInFull(caseNo)) { log('  paid in full already - skipped (use --force to re-read)'); continue; }
       try {
         await searchCaseByNo(page, caseNo, log);
         const opened = await openCaseByText(page, caseNo);
@@ -803,6 +821,7 @@ if (require.main === module) {
     from: arg('from', undefined),
     to: arg('to', undefined),
     hoursBack: parseFloat(arg('hours', '2')),
+    force: process.argv.includes('--force'),
     limit: limitArg === '' || limitArg === 'all' ? undefined : parseInt(limitArg, 10),
     headless: process.argv.includes('--headless') || undefined,
   }).catch((err) => {
