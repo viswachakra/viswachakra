@@ -37,3 +37,4 @@ xlsx-missing.json
 xlsx-cases.json
 repair-progress.json
 _*.json
+_*.txt

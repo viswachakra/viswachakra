@@ -758,6 +758,11 @@ async function rescrapeCases(caseNos, opts = {}) {
       if (!opts.force && settledInFull(key)) { log('  paid in full already - skipped (use --force to re-read)'); continue; }
       try {
         await searchCaseByNo(page, caseNo, log);
+        // the search results row carries the LIST fields (claim status, status
+        // date, patient name) that the case page itself does not show - read
+        // it before opening the case so a swept case never keeps a stale status
+        const listRow = (await scrapeResultsListOnce(page).catch(() => []))
+          .find((r) => canonicalCaseKey(r.case_no) === key) || {};
         const opened = await openCaseByText(page, caseNo);
         if (!opened) { log('  page did not load'); stillMissing++; continue; }
         const details = await scrapeCaseDetails(page);
@@ -765,13 +770,14 @@ async function rescrapeCases(caseNos, opts = {}) {
         const pre = await scrapePreauthWorkflow(page, log);
         const notes = await scrapeClinicalNotes(page, log);
         upsertCase.run({
-          case_no: key, claim_no: details.claim_no || '', patient_name: '',
-          card_no: details.card_no || '', district: details.district, mandal: details.mandal,
+          case_no: key, claim_no: details.claim_no || listRow.claim_no || '', patient_name: listRow.patient_name || '',
+          card_no: details.card_no || listRow.card_no || '', district: details.district, mandal: details.mandal,
           village: details.village, contact_no: details.contact_no, nwh_name: details.nwh_name,
           nwh_type: details.nwh_type, ip_no: details.ip_no,
           ip_registration_dt: details.ip_registration_dt || '', category: details.category,
           procedure_name: details.procedure_name, case_status: details.case_status,
-          claim_status: '', source_registration: '', status_date: '',
+          claim_status: listRow.claim_status || '', source_registration: listRow.source_registration || '',
+          status_date: listRow.status_date || '',
           workflow_note: wf.note || '', deep_synced: new Date().toISOString(),
           last_synced: new Date().toISOString(),
         });
@@ -993,7 +999,7 @@ module.exports = {
   // Lower-level steps, so a read-only audit can walk the portal itself without
   // going through runSync (which writes to SQLite). Used by
   // verify-against-portal.js.
-  login, searchCaseByNo, openCaseByText, scrapeCaseDetails, scrapeClaimWorkflow,
+  login, searchCaseByNo, openCaseByText, scrapeCaseDetails, scrapeClaimWorkflow, scrapeResultsListOnce,
   gotoCasesSearch, setStatusDateRange, runSearch, scrapeResultsList,
 };
 
