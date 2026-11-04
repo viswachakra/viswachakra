@@ -14,6 +14,18 @@ const { computeSummary } = require('./push-to-supabase');
 // Decided from the workflow rows we already hold; a case we have never
 // deep-scraped has no rows and is always scraped once. --force overrides.
 const _wfRows = db.prepare('SELECT row_index, date_time, role_name, remarks, action, amount FROM claim_workflow WHERE case_no = ?');
+// "AP14385944" -> "CASE/5722/AP14385944" (the form the portal lists and every
+// table is keyed by). Looks the case up locally first; otherwise uses the
+// hospital's NWH code, which is the same for every case of this hospital.
+const _findFull = db.prepare("SELECT case_no FROM cases WHERE case_no LIKE 'CASE/%/' || ? LIMIT 1");
+function canonicalCaseKey(caseNo) {
+  const s = String(caseNo || '').trim();
+  if (/^CASE\//.test(s)) return s;
+  const bare = s.replace(/^.*\//, '');
+  const hit = _findFull.get(bare);
+  return hit ? hit.case_no : 'CASE/5722/' + bare;
+}
+
 function settledInFull(caseNo) {
   const rows = _wfRows.all(caseNo);
   if (!rows.length) return false;
@@ -417,7 +429,7 @@ const _cleanCell = (td) => {
 /// in the frame whose body says "Preauth Details" (the claim frame has the same header).
 async function scrapePreauthWorkflow(page, log) {
   if (!await _callTab(page, "getPreAuth('1')")) return { rows: [], note: 'Pre Auth tab not available' };
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(3000);
   const extract = () => {
     if (!/Preauth Details/i.test(document.body.textContent || '')) return null;
     const tables = Array.from(document.querySelectorAll('table')).filter((t) => {
@@ -448,7 +460,7 @@ async function scrapePreauthWorkflow(page, log) {
 /// have any; an empty result is normal for a case that never reached a ward.
 async function scrapeClinicalNotes(page, log) {
   if (!await _callTab(page, "fn_getClinicData('2','PRE')")) return { rows: [], note: 'Clinical Notes tab not available' };
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(3000);
   const extract = () => {
     const tables = Array.from(document.querySelectorAll('table')).filter((t) => {
       const r = t.rows && t.rows[0];
@@ -692,10 +704,13 @@ async function rescrapeCases(caseNos, opts = {}) {
     // A short delay between cases keeps request-rate low enough to avoid session throttling.
     const page = await login(context, log);
     for (let i = 0; i < caseNos.length; i++) {
-      const caseNo = caseNos[i];
-      if (i > 0) await page.waitForTimeout(2500); // be gentle on the legacy portal
-      log(`[${i + 1}/${caseNos.length}] ${caseNo}...`);
-      if (!opts.force && settledInFull(caseNo)) { log('  paid in full already - skipped (use --force to re-read)'); continue; }
+      // the portal is searched by the bare number, but rows are ALWAYS stored
+      // under the full key - a bare key would create a duplicate case
+      const caseNo = String(caseNos[i]).replace(/^CASE\/\d+\//, '');
+      const key = canonicalCaseKey(caseNos[i]);
+      if (i > 0) await page.waitForTimeout(1500); // be gentle on the legacy portal
+      log(`[${i + 1}/${caseNos.length}] ${key}...`);
+      if (!opts.force && settledInFull(key)) { log('  paid in full already - skipped (use --force to re-read)'); continue; }
       try {
         await searchCaseByNo(page, caseNo, log);
         const opened = await openCaseByText(page, caseNo);
@@ -705,7 +720,7 @@ async function rescrapeCases(caseNos, opts = {}) {
         const pre = await scrapePreauthWorkflow(page, log);
         const notes = await scrapeClinicalNotes(page, log);
         upsertCase.run({
-          case_no: caseNo, claim_no: details.claim_no || '', patient_name: '',
+          case_no: key, claim_no: details.claim_no || '', patient_name: '',
           card_no: details.card_no || '', district: details.district, mandal: details.mandal,
           village: details.village, contact_no: details.contact_no, nwh_name: details.nwh_name,
           nwh_type: details.nwh_type, ip_no: details.ip_no,
@@ -715,9 +730,9 @@ async function rescrapeCases(caseNos, opts = {}) {
           workflow_note: wf.note || '', deep_synced: new Date().toISOString(),
           last_synced: new Date().toISOString(),
         });
-        if (wf.rows.length) replaceWorkflowForCase(caseNo, wf.rows);
-        if (pre.rows.length) replacePreauthForCase(caseNo, pre.rows);
-        replaceNotesForCase(caseNo, notes.rows);
+        if (wf.rows.length) replaceWorkflowForCase(key, wf.rows);
+        if (pre.rows.length) replacePreauthForCase(key, pre.rows);
+        replaceNotesForCase(key, notes.rows);
         if (wf.rows.length || pre.rows.length) fixed++; else stillMissing++;
         log(`  saved (${wf.rows.length} claim, ${pre.rows.length} preauth, ${notes.rows.length} notes)${wf.note ? ' - ' + wf.note : ''}`);
       } catch (e) {
@@ -929,7 +944,7 @@ async function scrapeCaseWorkflows(caseNos, opts = {}) {
 }
 
 module.exports = {
-  runSync, rescrapeCases, scrapePreauthWorkflow, scrapeClinicalNotes, fmt, countRanges, listRanges, scrapeCaseWorkflows,
+  runSync, rescrapeCases, scrapePreauthWorkflow, scrapeClinicalNotes, canonicalCaseKey, fmt, countRanges, listRanges, scrapeCaseWorkflows,
   // Lower-level steps, so a read-only audit can walk the portal itself without
   // going through runSync (which writes to SQLite). Used by
   // verify-against-portal.js.
