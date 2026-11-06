@@ -643,6 +643,10 @@ async function loadAlerts(){
     const paidAll=all.map(c=>({c,d:alPaidDate(c)})).filter(x=>x.d).sort((a,b)=>b.d-a.d);
     const paidYears=[...new Set(paidAll.map(x=>x.d.getFullYear()))].sort((a,b)=>b-a);if(!paidYears.includes(now.getFullYear()))paidYears.unshift(now.getFullYear());
     if(!alPaidF)alPaidF={y:now.getFullYear(),m:paidM.length?now.getMonth():-1};
+    const paidSurgAsked=new Set();
+    const paidNeedSurg=rows=>{const ids=rows.map(x=>x.c.case_no).filter(id=>!surgDate[id]&&!paidSurgAsked.has(id));if(!ids.length)return;ids.forEach(id=>paidSurgAsked.add(id));
+      (async()=>{for(let i=0;i<ids.length;i+=150){const {data:sd}=await sb.from('preauth_workflow').select('case_no,date_time,action').in('case_no',ids.slice(i,i+150)).ilike('action','%surgery%');(sd||[]).forEach(r=>{const d=parseWfDate(r.date_time);if(d&&(!surgDate[r.case_no]||d>surgDate[r.case_no]))surgDate[r.case_no]=d;});}
+        if(alCurrent==='paid')alShow('paid');})();};
     const paidHtml=()=>{const F=alPaidF,inY=paidAll.filter(x=>x.d.getFullYear()===F.y),rows=F.m<0?inY:inY.filter(x=>x.d.getMonth()===F.m);
       const amt=a=>a.reduce((t,x)=>t+(x.c.paid_amount||0),0),period=(F.m<0?'':alMon[F.m]+' ')+F.y;
       const filter='<div class="al-filter">Year <select id="al-paid-y">'+paidYears.map(y=>'<option value="'+y+'"'+(y===F.y?' selected':'')+'>'+y+'</option>').join('')+'</select> Month <select id="al-paid-m"><option value="-1"'+(F.m<0?' selected':'')+'>All months</option>'+alMon.map((mn,i)=>'<option value="'+i+'"'+(i===F.m?' selected':'')+'>'+mn+'</option>').join('')+'</select></div>';
@@ -652,8 +656,8 @@ async function loadAlerts(){
         const mrows=Object.values(bm).sort((a,b)=>b.m-a.m);
         out+=alSum(sum)+'<div class="card al-card" id="al-paid-months"><div class="al-hd"><div><b>'+F.y+' by month</b><span>Click a month to see its claims</span></div><div class="al-n g">'+inY.length+'</div></div>'
           +(mrows.length?'<table class="al-t"><tr><th>Month</th><th>Claims</th>'+(isAdmin?'<th>Received</th>':'')+'<th>Last payment</th></tr>'+mrows.map(r=>'<tr data-paid-m="'+r.m+'" style="cursor:pointer"><td class="who">'+alMon[r.m]+' '+F.y+'</td><td>'+r.n+'</td>'+(isAdmin?'<td class="al-g">'+inr0(r.amt)+'</td>':'')+'<td>'+esc(ddMonY(r.last))+'</td></tr>').join('')+'</table>':'<div class="al-empty">No payment recorded in '+F.y+'.</div>')+'</div>';
-      }else out+=alCard('Claims paid','Paid in '+period+' · newest first',rows,'g','<th>Patient</th><th>Paid on</th>'+(isAdmin?'<th>Claimed</th><th>Paid</th>':''),
-        x=>alWho(x.c)+'<td>'+esc(ddMonY(x.d))+'</td>'+(isAdmin?'<td>'+inr0(x.c.claimed_amount)+'</td><td class="al-g">'+inr0(x.c.paid_amount)+'</td>':''),'al-paid',sum,'No payment recorded in '+period+'.');
+      }else{paidNeedSurg(rows);rows.sort((a,b)=>b.d-a.d||(surgDate[b.c.case_no]||0)-(surgDate[a.c.case_no]||0));out+=alCard('Claims paid','Paid in '+period+' · newest payment first, then newest surgery',rows,'g','<th>Patient</th><th>Surgery</th><th>Paid on</th><th>Last status</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
+        x=>alWho(x.c)+'<td>'+esc(ddMonY(surgDate[x.c.case_no]))+'</td><td>'+esc(ddMonY(x.d))+'</td><td title="'+esc(x.c.claim_status||'')+'">'+esc(ddMonY(parseCaseDate(x.c.status_date)))+'</td>'+(isAdmin?'<td>'+inr0(x.c.preauth_amount)+'</td><td class="'+(alCut(x.c)?'al-r':'al-g')+'">'+inr0(alSanctioned(x.c))+'</td>':''),'al-paid',sum,'No payment recorded in '+period+'.');}
       return out;};
     S.paid={cls:'green',l:'PAID THIS MONTH',v:paidM.length,s:isAdmin?inrShortW(paidM.reduce((t,c)=>t+(c.paid_amount||0),0))+' received':'',html:paidHtml};
     if(isAdmin){
