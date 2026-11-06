@@ -490,6 +490,7 @@ const alDay=d=>d?new Date(d.getFullYear(),d.getMonth(),d.getDate()):null;
 const alDays=(a,b)=>Math.round((alDay(b)-alDay(a))/864e5);
 const alMon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const ddMon=d=>d?d.getDate()+' '+alMon[d.getMonth()]:'–';
+const ddMonY=d=>d?d.getDate()+' '+alMon[d.getMonth()]+' '+String(d.getFullYear()).slice(2):'–';
 const inr0=n=>n==null?'–':'₹'+Number(n).toLocaleString('en-IN');
 const alInWard=c=>!c.is_paid&&alRx(c.claim_status,'Preauthorisation PPD Approved|^Surgery Update');
 const alNotesMissing=c=>alInWard(c)&&(c.notes_last_date||'')!==fmtD(new Date());
@@ -563,7 +564,9 @@ async function loadAlerts(){
     // when was each preauth query asked? (last row of its preauth workflow)
     // real surgery dates for the discharge-pending list (from the preauth workflow)
     const surgDate={};
-    if(disch.length){const {data:sd}=await sb.from('preauth_workflow').select('case_no,date_time,action').in('case_no',disch.map(c=>c.case_no).slice(0,300)).ilike('action','%surgery%');(sd||[]).forEach(r=>{const d=parseWfDate(r.date_time);if(d&&(!surgDate[r.case_no]||d>surgDate[r.case_no]))surgDate[r.case_no]=d;});}
+    const surgIds=[...new Set(disch.map(c=>c.case_no).concat(isAdmin?cutRows.map(c=>c.case_no):[]))];
+    for(let i=0;i<surgIds.length;i+=150){const {data:sd}=await sb.from('preauth_workflow').select('case_no,date_time,action').in('case_no',surgIds.slice(i,i+150)).ilike('action','%surgery%');(sd||[]).forEach(r=>{const d=parseWfDate(r.date_time);if(d&&(!surgDate[r.case_no]||d>surgDate[r.case_no]))surgDate[r.case_no]=d;});}
+    cutRows.sort((a,b)=>(surgDate[b.case_no]||0)-(surgDate[a.case_no]||0)||alCut(b)-alCut(a));
     const preIds=queries.filter(c=>alQuery(c)==='preauth').map(c=>c.case_no);
     const preLast={};
     if(preIds.length){const {data}=await sb.from('preauth_workflow').select('case_no,row_index,date_time,role_name,action').in('case_no',preIds.slice(0,300));(data||[]).forEach(r=>{if(!preLast[r.case_no]||r.row_index>preLast[r.case_no].row_index)preLast[r.case_no]=r;});}
@@ -606,9 +609,9 @@ async function loadAlerts(){
       const total=cutRows.reduce((t,c)=>t+alCut(c),0);const preTot=all.filter(c=>c.preauth_amount&&(alPaidDate(c)||parseCaseDate(c.status_date)||now).getFullYear()===now.getFullYear()).reduce((t,c)=>t+c.preauth_amount,0);
       const pct=preTot?Math.round(total/preTot*100):0;
       S.money={cls:'red',l:'PREAUTH CUT '+now.getFullYear(),v:inrShortW(total),s:cutRows.length+' claims below preauth',html:()=>{
-        const rows=cutRows.map((c,i)=>'<tr data-case="'+esc(c.case_no)+'"'+(i>=5?' class="al-hid" style="display:none"':'')+'>'+alWho(c)+'<td>'+inr0(c.preauth_amount)+'</td><td>'+inr0(alSanctioned(c))+'</td><td class="al-r">−'+inr0(alCut(c))+'</td></tr>').join('');
+        const rows=cutRows.map((c,i)=>'<tr data-case="'+esc(c.case_no)+'"'+(i>=5?' class="al-hid" style="display:none"':'')+'>'+alWho(c)+'<td>'+esc(ddMonY(surgDate[c.case_no]))+'</td><td title="'+esc(c.claim_status||'')+'">'+esc(ddMonY(parseCaseDate(c.status_date)))+'</td><td>'+inr0(c.preauth_amount)+'</td><td>'+inr0(alSanctioned(c))+'</td><td class="al-r">−'+inr0(alCut(c))+'</td></tr>').join('');
         return '<div class="card al-card al-money" id="al-money-card"><div class="l">PREAUTH vs FINAL APPROVED — '+now.getFullYear()+' · DOCTOR ONLY</div><div class="big">'+inr0(total)+' <span style="font-size:13px;color:var(--text-3);font-weight:500">cut on '+cutRows.length+' claims</span></div><div class="al-bar"><i style="width:'+Math.min(100,pct)+'%"></i></div><div style="font-size:11.5px;color:var(--text-3)">'+pct+'% of '+inrShortW(preTot)+' preauthorised</div>'
-          +(cutRows.length?'<table class="al-t" style="margin-top:10px"><tr><th>Patient</th><th>Preauth</th><th>Approved</th><th>Cut</th></tr>'+rows+'</table>'+(cutRows.length>5?'<div class="al-more" data-more="al-money-card">+ '+(cutRows.length-5)+' more ›</div>':''):'<div class="al-empty">No claim this year was approved below its preauth amount — or the preauth data is still being collected.</div>')+'</div>';}};
+          +(cutRows.length?'<table class="al-t" style="margin-top:10px"><tr><th>Patient</th><th>Surgery</th><th>Last status</th><th>Preauth</th><th>Approved</th><th>Cut</th></tr>'+rows+'</table>'+(cutRows.length>5?'<div class="al-more" data-more="al-money-card">+ '+(cutRows.length-5)+' more ›</div>':''):'<div class="al-empty">No claim this year was approved below its preauth amount — or the preauth data is still being collected.</div>')+'</div>';}};
     }
     alSections=S;
     const order=['notes','queries','discharge','file','trust','ceo','approved','paid','money'].filter(k=>S[k]);
