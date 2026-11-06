@@ -179,6 +179,8 @@
   .al-more{padding:9px 16px;color:var(--primary);font-size:12px;border-top:1px solid var(--border);cursor:pointer;font-weight:600}
   .al-empty{padding:16px;color:var(--text-3);font-size:12.5px}
   .al-pipe{display:flex;gap:8px;margin-bottom:12px}.al-pipe .card{flex:1;text-align:center;padding:14px 8px}.al-pipe .v{font-size:24px;font-weight:800}.al-pipe small{display:block;font-size:11px;color:var(--text-3);margin-top:2px}.al-pipe .arrow{align-self:center;color:var(--text-3);font-size:20px}
+  .al-action{background:var(--red-bg);color:var(--red-fg);border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:14px;font-weight:600}
+  .al-action b{font-weight:800}.al-action a{color:inherit;text-decoration:underline;cursor:pointer}.al-action.ok{background:var(--green-bg,#d7f5e3);color:var(--green-fg)}
   .al-notice{background:var(--amber-bg);color:var(--amber-fg);border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;line-height:1.5}.al-notice b{display:block;font-size:11px;letter-spacing:.4px;margin-bottom:3px}
   .al-money{padding:14px 16px}.al-money .big{font-size:26px;font-weight:800;color:var(--red-fg)}.al-money .l{font-size:10.5px;letter-spacing:.5px;color:var(--text-3);font-weight:700}
   .al-bar{height:8px;background:var(--border);border-radius:4px;margin:10px 0 4px;overflow:hidden}.al-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--red-fg),#c9a227)}
@@ -285,6 +287,8 @@
   <!-- ===== Alerts: the doctor's morning screen (his eight requirements, 2026-11) ===== -->
   <main id="view-alerts" style="display:none">
     <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span></div>
+    <!-- what the red number on the Alerts tab is made of -->
+    <div id="al-action" class="al-action" style="display:none"></div>
     <div id="al-notices" style="display:none"></div>
     <div id="al-loading" class="empty">Loading…</div>
     <div id="al-content" style="display:none">
@@ -669,6 +673,14 @@ async function loadAlerts(){
     $('al-kpis').innerHTML=groups.map(g=>{const ks=g[1].filter(k=>S[k]);return ks.length?'<div class="al-grp">'+g[0]+'</div>'+ks.map(k=>'<div class="al-kpi '+S[k].cls+'" data-go="'+k+'"><div class="l"><span class="l-t">'+S[k].l+'</span><span class="l-r">'+esc(RL[k])+'</span></div><div class="v">'+S[k].v+'</div><div class="s">'+S[k].s+'</div></div>').join(''):'';}).join('');
     const badge=queries.length+dueSoon.length+overdue.length;
     $('alerts-badge').textContent=badge;$('alerts-badge').style.display=badge?'inline':'none';
+    // say what that number is: each part links to its list
+    const pl=(k,one,many)=>k+' '+(k===1?one:many);
+    const parts=[queries.length&&['queries',pl(queries.length,'Trust query','Trust queries')+' open'],dueSoon.length&&['file',pl(dueSoon.length,'claim','claims')+' due in '+CLAIM_WARN+' days or less'],overdue.length&&['file',pl(overdue.length,'claim','claims')+' past the filing deadline']].filter(Boolean);
+    const act=$('al-action');
+    act.className='al-action'+(badge?'':' ok');
+    act.innerHTML=badge?'<b>'+badge+'</b> '+(badge===1?'needs':'need')+' action today: '+parts.map(p=>'<a data-go-list="'+p[0]+'">'+esc(p[1])+'</a>').join(' · '):'Nothing needs action today. No open Trust query, and no claim within '+CLAIM_WARN+' days of its filing deadline.';
+    act.style.display='block';
+    $('alerts-badge').title=parts.map(p=>p[1]).join(', ');
     alShow(alCurrent&&S[alCurrent]?alCurrent:(order.find(k=>typeof S[k].v==='number'&&S[k].v>0)||order[0]));
 
     $('al-loading').style.display='none';$('al-content').style.display='block';
@@ -679,6 +691,7 @@ function inrShortW(v){v=Math.round(v||0);if(v>=1e7)return '₹'+(v/1e7).toFixed(
 document.addEventListener('click',e=>{
   const more=e.target.closest('.al-more');if(more){const card=$(more.dataset.more);if(card){card.querySelectorAll('.al-hid').forEach(tr=>tr.style.display='');more.remove();}return;}
   const kpi=e.target.closest('.al-kpi');if(kpi){alShow(kpi.dataset.go);return;}
+  const gl=e.target.closest('[data-go-list]');if(gl){alShow(gl.dataset.goList);return;}
   const pb=e.target.closest('[data-paid-all]');if(pb&&alPaidF){alPaidF.m=-1;alShow('paid');return;}
   const pm=e.target.closest('tr[data-paid-m]');if(pm&&alPaidF){alPaidF.m=+pm.dataset.paidM;alShow('paid');return;}
   const tr=e.target.closest('#al-content tr[data-case]');if(tr&&tr.dataset.case)showDetail(tr.dataset.case);
