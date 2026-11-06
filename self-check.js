@@ -56,9 +56,20 @@ const TILES = [
 ];
 const tileOf = (status) => { const t = TILES.find(([, re]) => re.test(status || '')); return t ? t[0] : null; };
 // Settled statuses hold thousands of cases; a count is enough to see drift.
-const COUNT_ONLY = /^Claim Paid( \(BDS\))?$|^Cancelled by MEDCO$|^Preauthorisation (PPD|PTD) Rejected$/i;
+const COUNT_ONLY = /^Claim Paid( \(BDS\))?$|^Preauthorisation (PPD|PTD) Rejected$/i;
 
 const bare = (caseNo) => String(caseNo || '').trim().replace(/^.*\//, '');
+
+// 1,408 old cases are on the portal but deliberately not in the app: they are
+// not in the doctor's own export and were removed on 5 Oct 2026 (backup in
+// backup-extras.json). They are expected in the portal's counts, and a
+// difference made only of them is never "repaired" back in.
+const EXCLUDED = (() => {
+  try {
+    const b = JSON.parse(fs.readFileSync(path.join(__dirname, 'backup-extras.json'), 'utf8'));
+    return new Map((b.cases || []).map((c) => [bare(c.case_no), c.claim_status || c.case_status || '']));
+  } catch (e) { return new Map(); }
+})();
 
 async function fetchAppCases() {
   const out = [];
@@ -152,7 +163,7 @@ async function main() {
       const mine = appNow.filter((c) => c.claim_status === text);
       const row = { status: text, tile: tileOf(text), portal: p.total, app: mine.length, missing: [], extra: [], dateDiff: [] };
       if (!p.countOnly) {
-        for (const k of p.rows.keys()) { const c = appByNow.get(k); if (!c || c.claim_status !== text) { row.missing.push(k); bad.add(k); } }
+        for (const k of p.rows.keys()) { const c = appByNow.get(k); if (!c && EXCLUDED.has(k)) continue; if (!c || c.claim_status !== text) { row.missing.push(k); bad.add(k); } }
         for (const c of mine) { const k = bare(c.case_no); if (!p.rows.has(k)) { row.extra.push(k); bad.add(k); } }
         // the deadline arithmetic rests on the status date: it has to match too
         if (row.tile) for (const [k, r] of p.rows) { const c = appByNow.get(k); if (c && c.claim_status === text && r.status_date && (c.status_date || '').slice(0, 16) !== r.status_date.slice(0, 16)) { row.dateDiff.push(k); bad.add(k); } }
@@ -187,7 +198,12 @@ async function main() {
   report.checked = portal.size;
   report.tiles = TILES.map(([name]) => { const rs = cmp.rows.filter((r) => r.tile === name); return { tile: name, portal: rs.reduce((t, r) => t + r.portal, 0), app: rs.reduce((t, r) => t + r.app, 0), ok: rs.every((r) => !r.missing.length && !r.extra.length && !r.dateDiff.length) }; });
   // settled statuses are compared by count only
-  for (const r of cmp.rows) if (portal.get(r.status).countOnly && r.portal !== r.app) report.notes.push(`"${r.status}": portal ${r.portal}, app ${r.app}.`);
+  for (const r of cmp.rows) {
+    if (!portal.get(r.status).countOnly) continue;
+    const old = [...EXCLUDED.entries()].filter(([k, st]) => st === r.status && !appBy.has(k)).length;
+    const gap = r.portal - r.app - old;
+    if (gap !== 0) report.notes.push(`"${r.status}": the portal lists ${r.portal}; the app holds ${r.app} and ${old} are old cases left out on purpose; ${Math.abs(gap)} ${gap > 0 ? 'on the portal are not accounted for' : 'more in the app than on the portal'}.`);
+  }
   report.ok = cmp.bad.length === 0;
   report.minutes = Math.round((Date.now() - started) / 60000);
 
