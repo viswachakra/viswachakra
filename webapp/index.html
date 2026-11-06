@@ -179,6 +179,12 @@
   .al-more{padding:9px 16px;color:var(--primary);font-size:12px;border-top:1px solid var(--border);cursor:pointer;font-weight:600}
   .al-empty{padding:16px;color:var(--text-3);font-size:12.5px}
   .al-pipe{display:flex;gap:8px;margin-bottom:12px}.al-pipe .card{flex:1;text-align:center;padding:14px 8px}.al-pipe .v{font-size:24px;font-weight:800}.al-pipe small{display:block;font-size:11px;color:var(--text-3);margin-top:2px}.al-pipe .arrow{align-self:center;color:var(--text-3);font-size:20px}
+  .sc-card{margin-bottom:16px}.sc-hd{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}
+  .sc-hd b{font-size:14px;display:block}.sc-hd span.sub{font-size:11.5px;color:var(--text-3)}
+  .sc-pill{margin-left:auto;font-size:11.5px;font-weight:700;padding:4px 11px;border-radius:12px}.sc-pill.ok{background:var(--green-bg);color:var(--green-fg)}.sc-pill.bad{background:var(--red-bg);color:var(--red-fg)}.sc-pill.old{background:var(--amber-bg);color:var(--amber-fg)}
+  .sc-body{padding:12px 16px;font-size:12.5px;color:var(--text-2);line-height:1.6}.sc-body .al-t{margin:6px 0 4px}.sc-ok{color:var(--green-fg);font-weight:700}.sc-bad{color:var(--red-fg);font-weight:700}
+  .sc-days{display:flex;gap:5px;align-items:center;margin-top:8px;font-size:11.5px;color:var(--text-3)}.sc-days i{width:11px;height:11px;border-radius:50%;display:inline-block;background:var(--green-fg)}.sc-days i.bad{background:var(--red-fg)}.sc-days i.fix{background:#e09b1a}
+  .al-check{font-size:12px;font-weight:600;cursor:pointer}.al-check.ok{color:var(--green-fg)}.al-check.bad{color:var(--red-fg)}.al-check.old{color:var(--amber-fg)}
   .al-loaded{font-size:12px;color:var(--text-3)}.al-refresh{font-size:12.5px;font-weight:600;color:var(--primary);cursor:pointer;margin-left:auto}
   .al-action{background:var(--red-bg);color:var(--red-fg);border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:14px;font-weight:600}
   .al-action b{font-weight:800}.al-action a{color:inherit;text-decoration:underline;cursor:pointer}.al-action.ok{background:var(--green-bg,#d7f5e3);color:var(--green-fg)}
@@ -287,7 +293,7 @@
 
   <!-- ===== Alerts: the doctor's morning screen (his eight requirements, 2026-11) ===== -->
   <main id="view-alerts" style="display:none">
-    <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span><span id="al-loaded" class="al-loaded"></span><a id="al-refresh" class="al-refresh">↻ Refresh</a></div>
+    <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span><span id="al-loaded" class="al-loaded"></span><span id="al-check" class="al-check"></span><a id="al-refresh" class="al-refresh">↻ Refresh</a></div>
     <!-- what the red number on the Alerts tab is made of -->
     <div id="al-action" class="al-action" style="display:none"></div>
     <div id="al-notices" style="display:none"></div>
@@ -374,6 +380,8 @@
       <div class="kpi"><div class="l">Failures today</div><div class="v" id="sy-fail">–</div></div>
     </div>
     <div id="sy-banner" style="display:none;margin-bottom:14px;padding:12px 16px;border-radius:10px;font-size:13.5px;font-weight:600"></div>
+    <!-- daily self-check: the app's lists compared with the portal's own (self-check.js) -->
+    <div id="sc-card"></div>
     <div class="toolbar"><span style="font-size:11.5px;color:var(--text-3)">The hourly sync pulls recent portal changes into this app. A <b>failed</b> run, or a long gap since the last success, means the sync is broken and needs a look.</span><span class="grow"></span><button class="btn sm ghost" id="sy-refresh">↻ Refresh</button></div>
     <div class="card">
       <table>
@@ -517,6 +525,34 @@ const AL_COLS='case_no,patient_name,claim_status,status_date,claimed_amount,appr
 //   preauth pending reply 10 d, surgery -> discharge 30 d, preauth approved -> surgery 30 d,
 //   IP registered -> preauth initiated 7 d (portal warns at 72 h).
 const CLAIM_OPENS=11,CLAIM_CLOSES=21,CLAIM_WARN=3,REPLY_DAYS=14,PREAUTH_REPLY_DAYS=10,SURGERY_TO_DISCHARGE=30,PREAUTH_TO_SURGERY=30,TRUST_STALL_DAYS=30;
+// ---- daily self-check (self-check.js): the app's lists compared with the portal's own ----
+async function scLoad(){
+  try{const {data}=await sb.from('app_settings').select('key,value,updated_at').in('key',['self_check','self_check_error']);
+    const o={};(data||[]).forEach(r=>{try{o[r.key]=JSON.parse(r.value);}catch(e){}});return o;}catch(e){return {};}
+}
+// 'ok' | 'bad' | 'old' | 'none', with a sentence
+function scVerdict(r,err){
+  if(!r)return {k:'none',t:'The self-check has not run yet.'};
+  const at=new Date(r.at),hrs=(Date.now()-at)/36e5,when=at.toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  const failedSince=err&&err.at&&new Date(err.at)>at;
+  if(hrs>36||failedSince)return {k:'old',when,t:failedSince?'The last self-check could not finish ('+(err.error||'unknown error')+'). Last completed '+when+'.':'The self-check last ran '+when+' — more than a day ago.'};
+  if(!r.ok)return {k:'bad',when,t:(r.remaining||[]).length+' case(s) still differ from the portal after the check of '+when+'.'};
+  return {k:'ok',when,t:'Matched the portal '+when+(r.healed&&r.healed.length?' · '+r.healed.length+' corrected':'')};
+}
+function scRender(r,err){
+  const v=scVerdict(r,err);
+  if(!r)return '<div class="card sc-card"><div class="sc-hd"><div><b>Daily self-check</b><span class="sub">Compares the app with the portal, status by status</span></div><span class="sc-pill old">Not run yet</span></div></div>';
+  const tiles=(r.tiles||[]).map(t=>'<tr><td class="who">'+esc(t.tile)+'</td><td>'+t.portal+'</td><td>'+t.app+'</td><td class="'+(t.ok?'sc-ok':'sc-bad')+'">'+(t.ok?'✓ same cases, same dates':'✗ differs')+'</td></tr>').join('');
+  const diffs=(r.statuses||[]).filter(x=>(x.missing||[]).length||(x.extra||[]).length||(x.dateDiff||[]).length).map(x=>'<tr><td class="who">'+esc(x.status)+'</td><td>'+((x.missing||[]).map(esc).join(', ')||'–')+'</td><td>'+((x.extra||[]).map(esc).join(', ')||'–')+'</td><td>'+((x.dateDiff||[]).map(esc).join(', ')||'–')+'</td></tr>').join('');
+  const days=(r.history||[]).slice().reverse().map(h=>'<i class="'+(h.remaining?'bad':h.before?'fix':'')+'" title="'+esc(new Date(h.at).toLocaleDateString('en-IN',{day:'numeric',month:'short'})+': '+(h.remaining?h.remaining+' still different':h.before?h.before+' differed, all corrected':'all matched'))+'"></i>').join('');
+  return '<div class="card sc-card"><div class="sc-hd"><div><b>Daily self-check</b><span class="sub">Every status that feeds an alert: the portal\'s own list against the app\'s · '+esc(v.when||'')+' · '+(r.checked||0)+' statuses · '+(r.minutes||0)+' min</span></div><span class="sc-pill '+v.k+'">'+(v.k==='ok'?'Matches the portal':v.k==='bad'?'Differences found':'Check is overdue')+'</span></div>'
+    +'<div class="sc-body">'+esc(v.t)+' '+(r.before?('<b>'+r.before+'</b> case(s) differed when it started, <b>'+(r.healed||[]).length+'</b> were re-read and corrected, <b>'+(r.remaining||[]).length+'</b> remain.'):'Nothing differed.')
+    +'<table class="al-t"><tr><th>List</th><th>On the portal</th><th>In the app</th><th>Result</th></tr>'+tiles+'</table>'
+    +(diffs?'<div style="margin-top:8px"><b>Still different</b></div><table class="al-t"><tr><th>Status</th><th>On the portal, not in the app</th><th>In the app, not on the portal</th><th>Status date differs</th></tr>'+diffs+'</table>':'')
+    +((r.notes||[]).length?'<div style="margin-top:8px">'+r.notes.map(x=>'· '+esc(x)).join('<br>')+'</div>':'')
+    +(days?'<div class="sc-days">Last '+(r.history||[]).length+' checks '+days+'<span>green = matched · amber = corrected · red = still different</span></div>':'')
+    +'</div></div>';
+}
 // Search boxes take several values at once - "AP14273488, AP14304915" - separated by commas,
 // semicolons or new lines; a row matches when it contains ANY of them.
 const qTerms=q=>String(q||'').toLowerCase().split(/[,;\n]+/).map(t=>t.trim()).filter(Boolean);
@@ -540,7 +576,7 @@ const ddMonY=d=>d?d.getDate()+' '+alMon[d.getMonth()]+' '+String(d.getFullYear()
 const inr0=n=>n==null?'–':'₹'+Number(n).toLocaleString('en-IN');
 const alDischargePending=c=>!c.is_paid&&alRx(c.claim_status,'^Surgery Update');
 const alToFile=c=>!c.is_paid&&alRx(c.claim_status,'^Discharge Update');
-const alQuery=c=>c.is_paid?null:((alRx(c.claim_status,'^Preauthorisation .*Pending')||(c.preauth_query_open&&!alRx(c.claim_status,'Reject|Cancel|Approved|Update|^Claim|CEO')))?'preauth':(alRx(c.claim_status,'returned to nwh|sent back|kept hold')?'claim':null));
+const alQuery=c=>c.is_paid?null:((alRx(c.claim_status,'^Preauthorisation .*Pending')||(c.preauth_query_open&&!alRx(c.claim_status,'Reject|Cancel|Approved|Update|^Claim|CEO')))?'preauth':(alRx(c.claim_status,'Returned to NWH|Medco not updated')?'claim':null));
 const alAwaitCeo=c=>!c.is_paid&&alRx(c.claim_status,'sent to ceo|forwarded to ceo');
 // claim is with the Trust (Claim Executive, Panel/Trust Doctor, CTD, EO) and
 // nothing is pending with the hospital - the CEO stage has its own tile
@@ -591,6 +627,7 @@ async function loadAlerts(){
   try{
     if(!alertsAll||Date.now()-alertsAt>AL_STALE_MS){alertsAll=await fetchAllPar('cases',AL_COLS);alertsAt=Date.now();}
     $('al-loaded').textContent='· page updated '+new Date(alertsAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+    scLoad().then(o=>{const v=scVerdict(o.self_check,o.self_check_error),el=$('al-check');el.className='al-check '+v.k;el.textContent=v.k==='none'?'':(v.k==='ok'?'· ✓ ':'· ⚠ ')+v.t;el.title='Open Sync History for the full comparison';});
     const all=alertsAll,now=new Date();
     $('al-date').textContent=now.toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'});
     const newest=all.reduce((m,c)=>c.last_synced&&c.last_synced>m?c.last_synced:m,'');
@@ -747,6 +784,7 @@ document.addEventListener('click',e=>{
   const kpi=e.target.closest('.al-kpi');if(kpi){alShow(kpi.dataset.go);return;}
   const gl=e.target.closest('[data-go-list]');if(gl){alShow(gl.dataset.goList);return;}
   if(e.target.closest('#al-refresh')){alRefresh(true);return;}
+  if(e.target.closest('#al-check')){switchView('sync');return;}
   const pb=e.target.closest('[data-paid-all]');if(pb&&alPaidF){alPaidF.m=-1;alShow('paid');return;}
   const pm=e.target.closest('tr[data-paid-m]');if(pm&&alPaidF){alPaidF.m=+pm.dataset.paidM;alShow('paid');return;}
   const tr=e.target.closest('#al-content tr[data-case]');if(tr&&tr.dataset.case)showDetail(tr.dataset.case);
@@ -1343,6 +1381,7 @@ async function loadClaims(){try{await ensureClaimsData();$('cm-loading').style.d
 
 // ---- Sync History tab: shows the hourly sync's run log so a broken sync is obvious ----
 async function loadSync(){
+  scLoad().then(o=>{$('sc-card').innerHTML=scRender(o.self_check,o.self_check_error);});
   try{
     const {data,error}=await sb.from('sync_runs').select('*').order('started_at',{ascending:false}).limit(400);
     if(error)throw new Error(error.message);

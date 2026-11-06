@@ -47,6 +47,15 @@ function Invoke-WithDeadline($commandLine, $minutes, $label) {
   return $false
 }
 
+# The daily self-check holds the portal session for 15-25 minutes. A second login would end
+# it mid-check, so stand aside for this hour; the next run starts from where the last
+# successful one ended, so nothing is lost. A lock older than 45 minutes is a crashed check.
+$Lock = Join-Path $PSScriptRoot 'logs\self-check.lock'
+if ((Test-Path $Lock) -and ((Get-Date) - (Get-Item $Lock).LastWriteTime).TotalMinutes -lt 45) {
+  Write-Log "===== sync skipped $(Get-Date -Format 'dd-MM-yyyy HH:mm:ss') - daily self-check is using the portal ====="
+  exit 0
+}
+
 Write-Log "===== sync started $(Get-Date -Format 'dd-MM-yyyy HH:mm:ss') ====="
 
 $env:HEADLESS = 'true'
