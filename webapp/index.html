@@ -138,6 +138,7 @@
   .al-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
   .al-sum>div{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px}
   .al-sum .l{font-size:10.5px;letter-spacing:.4px;font-weight:700;color:var(--text-3);text-transform:uppercase}.al-sum .v{font-size:20px;font-weight:800;margin-top:3px}.al-sum .v.sm{font-size:13px;font-weight:600;line-height:1.5}
+  .al-rule{padding:9px 16px;font-size:12px;color:var(--text-2);background:#fafbfe;border-bottom:1px solid var(--border);line-height:1.6}.al-rule b{font-size:10.5px;letter-spacing:.4px;color:var(--text-3);margin-right:8px}
   .al-filter{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:12.5px;color:var(--text-2)}
   .al-back{color:var(--primary);font-weight:600;cursor:pointer;margin-right:8px;padding:7px 12px;border:1px solid var(--border-strong);border-radius:9px;background:var(--card)}.al-back:hover{background:var(--primary-light)}
   .al-filter select{padding:7px 10px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;background:var(--card);color:var(--text);font-family:inherit}
@@ -535,12 +536,25 @@ const alSince=c=>{const a=parseCaseDate(c.status_date),b=parseWfDate(c.latest_co
 const alLastTd=c=>'<td title="'+esc(c.claim_status||'')+'">'+esc(ddMonY(alSince(c)))+'</td>';
 const alCaseShort=c=>String(c.case_no||'').replace(/^CASE\/\d+\//,'');
 
+// the rule behind each list, in plain words, shown under its title. Keep in step with the al* filters above.
+const AL_RULES={
+  'al-notes':()=>'Patients whose status is "Preauthorisation PPD Approved" or "Surgery Update" and who have no clinical note dated today. When the portal\'s own login list was captured today, that list is used instead.',
+  'al-queries':()=>'Not paid, and one of: the status is "Preauthorisation … Pending"; or the Trust\'s last preauth action is a pending or sent-back and the case is not rejected, cancelled or approved; or the claim status contains "Returned to NWH", "Sent back" or "Kept hold". Reply by = date asked + '+PREAUTH_REPLY_DAYS+' days at preauth stage, + '+REPLY_DAYS+' days at claim stage.',
+  'al-discharge':()=>'Not paid and status is "Surgery Update": surgery is posted, discharge is not. Days since = today − the surgery date in the preauth history. Amber from day '+(SURGERY_TO_DISCHARGE-9)+', red from day '+SURGERY_TO_DISCHARGE+'.',
+  'al-file':()=>'Not paid and status is "Discharge Update". Window opens = discharge update date + '+CLAIM_OPENS+' days, closes = + '+CLAIM_CLOSES+' days. Red when '+CLAIM_WARN+' days or fewer are left. Discharges more than 30 days past the closing date are left out.',
+  'al-trust':()=>'Not paid, no open query, and status is "Claim sent to Claim Executive", "Claim sent to Panel Doctor", "… Recommend Approval or Rejection to CTD or EO", or "… Claim Resubmitted by NWH". Waiting = today − last status date. Flagged at '+TRUST_STALL_DAYS+' days.',
+  'al-ceo':()=>'Not paid and status contains "sent to CEO" or "Forwarded to CEO". Waiting = today − last status date. Amber after 45 days.',
+  'al-approved':()=>'Not paid and status is "CEO Claim Approved". Approved = the amount on the last "Recommended for Approval" row in the claim history.',
+  'al-paid':()=>'A claim is paid when its claim history has a "Paid" row. The payment date and amount come from that row, not from the status date.',
+  'al-money-card':()=>'Preauth = the amount on the Trust\'s approval row in the preauth history. Approved = the amount paid, or the last recommended amount if not yet paid. Listed when Approved is below Preauth. Year = payment date, or last status date if unpaid.'
+};
+const alRule=id=>AL_RULES[id]?'<div class="al-rule"><b>RULE</b>'+esc(AL_RULES[id]())+'</div>':'';
 // summary strip above a list: [label, value(html), optional class]
 const alSum=a=>'<div class="al-sum">'+a.filter(Boolean).map(x=>'<div><div class="l">'+esc(x[0])+'</div><div class="v '+(x[2]||'')+'">'+x[1]+'</div></div>').join('')+'</div>';
 function alCard(title,sub,rows,cls,head,rowFn,id,sum,empty){
   const n=rows.length;
   const body=rows.map(r=>'<tr data-case="'+esc((r.c||r).case_no||'')+'">'+rowFn(r)+'</tr>').join('');
-  return (sum?alSum(sum):'')+'<div class="card al-card" id="'+id+'"><div class="al-hd"><div><b>'+esc(title)+'</b><span>'+esc(sub)+'</span></div><div class="al-n '+cls+'">'+n+'</div></div>'
+  return (sum?alSum(sum):'')+'<div class="card al-card" id="'+id+'"><div class="al-hd"><div><b>'+esc(title)+'</b><span>'+esc(sub)+'</span></div><div class="al-n '+cls+'">'+n+'</div></div>'+alRule(id)
     +(n?'<table class="al-t"><tr>'+head+'</tr>'+body+'</table>':'<div class="al-empty">'+esc(empty||'Nothing here — all clear.')+'</div>')+'</div>';
 }
 // the Trust claim doctor's stated reason, out of the questionnaire text in a claim-history remark
@@ -658,7 +672,7 @@ async function loadAlerts(){
       let out=filter;
       if(F.m<0){const bm={};inY.forEach(x=>{const k=x.d.getMonth();(bm[k]=bm[k]||{m:k,n:0,amt:0,last:x.d});bm[k].n++;bm[k].amt+=x.c.paid_amount||0;if(x.d>bm[k].last)bm[k].last=x.d;});
         const mrows=Object.values(bm).sort((a,b)=>b.m-a.m);
-        out+=alSum(sum)+'<div class="card al-card" id="al-paid-months"><div class="al-hd"><div><b>'+F.y+' by month</b><span>Click a month to see its claims</span></div><div class="al-n g">'+inY.length+'</div></div>'
+        out+=alSum(sum)+'<div class="card al-card" id="al-paid-months"><div class="al-hd"><div><b>'+F.y+' by month</b><span>Click a month to see its claims</span></div><div class="al-n g">'+inY.length+'</div></div>'+alRule('al-paid')
           +(mrows.length?'<table class="al-t"><tr><th>Month</th><th>Claims</th>'+(isAdmin?'<th>Received</th>':'')+'<th>Last payment</th></tr>'+mrows.map(r=>'<tr data-paid-m="'+r.m+'" style="cursor:pointer"><td class="who">'+alMon[r.m]+' '+F.y+'</td><td>'+r.n+'</td>'+(isAdmin?'<td class="al-g">'+inr0(r.amt)+'</td>':'')+'<td>'+esc(ddMonY(r.last))+'</td></tr>').join('')+'</table>':'<div class="al-empty">No payment recorded in '+F.y+'.</div>')+'</div>';
       }else{paidNeedSurg(rows);rows.sort((a,b)=>b.d-a.d||(surgDate[b.c.case_no]||0)-(surgDate[a.c.case_no]||0));out+=alCard('Claims paid','Paid in '+period+' · newest payment first, then newest surgery',rows,'g','<th>Patient</th><th>Surgery</th><th>Paid on</th><th>Last status</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
         x=>alWho(x.c)+'<td>'+esc(ddMonY(surgDate[x.c.case_no]))+'</td><td>'+esc(ddMonY(x.d))+'</td><td title="'+esc(x.c.claim_status||'')+'">'+esc(ddMonY(parseCaseDate(x.c.status_date)))+'</td>'+(isAdmin?'<td>'+inr0(x.c.preauth_amount)+'</td><td class="'+(alCut(x.c)?'al-r':'al-g')+'">'+inr0(alSanctioned(x.c))+'</td>':''),'al-paid',sum,'No payment recorded in '+period+'.');}
