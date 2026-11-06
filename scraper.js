@@ -592,13 +592,38 @@ async function scrapeClaimWorkflow(page, log) {
   return { rows: [], note: 'workflow table not found in any frame' };
 }
 
+/** End of the status-date window of the last successful windowed sync, or null. */
+function lastWindowEnd() {
+  try {
+    const r = db.prepare("select to_dt from sync_runs where status = 'success' and from_dt like '__/__/____ __:__' order by id desc limit 1").get();
+    const m = r && /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/.exec(r.to_dt || '');
+    return m ? new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]) : null;
+  } catch (e) { return null; }
+}
+
 /**
  * Run a full sync: search cases in the status-date window, save the list,
  * then deep-scrape each case (details + claim workflow).
  */
 async function runSync(opts = {}) {
   const now = new Date();
-  const defaultFrom = new Date(now.getTime() - (opts.hoursBack || 2) * 3600 * 1000);
+  let defaultFrom = new Date(now.getTime() - (opts.hoursBack || 2) * 3600 * 1000);
+  // A fixed look-back loses every change made while the sync was not running - a
+  // disabled task, an outage, a long manual sweep. On 5 Nov 2026 a discharge
+  // update posted during the full sweep was never read, because the hourly sync
+  // resumed looking only 2 hours back. So when the last successful windowed run
+  // ended earlier than that, start from where it ended (minus an hour of overlap).
+  // Capped at 14 days so a long outage cannot turn into an endless search.
+  if (!opts.from) {
+    const last = lastWindowEnd();
+    if (last) {
+      const resume = new Date(Math.max(last.getTime() - 3600 * 1000, now.getTime() - 14 * 24 * 3600 * 1000));
+      if (resume < defaultFrom) {
+        (opts.log || console.log)(`  [catch-up: last successful sync covered up to ${fmt(last)} - starting from ${fmt(resume)}]`);
+        defaultFrom = resume;
+      }
+    }
+  }
   const fromStr = opts.from || fmt(defaultFrom);
   const toStr = opts.to || fmt(now);
   const limit = opts.limit === undefined ? Infinity : opts.limit;
