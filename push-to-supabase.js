@@ -50,7 +50,7 @@ function computePreauth(rows) {
   if (!rows.length) return {};
   const last = rows[rows.length - 1];
   const appr = [...rows].reverse().find((r) => /approv/i.test(r.action || '') && parseAmt(r.amount) > 0);
-  const queryOpen = !HOSPITAL_ROLE.test(last.role_name || '') &&
+  const queryOpen = !HOSPITAL_ROLE.test(last.role_name || '') && !/reject|approv|cancel/i.test(last.action || '') &&
     /pending|sent back|query|return|hold|clarif/i.test((last.action || '') + ' ' + (last.remarks || '').slice(0, 40));
   return {
     preauth_amount: appr ? parseAmt(appr.amount) : null,
