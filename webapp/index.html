@@ -543,7 +543,8 @@ const alCaseShort=c=>String(c.case_no||'').replace(/^CASE\/\d+\//,'');
 
 // the rule behind each list, in plain words, shown under its title. Keep in step with the al* filters above.
 const AL_RULES={
-  'al-queries':()=>'Not paid, and one of: the status is "Preauthorisation … Pending"; or the Trust\'s last preauth action is a pending or sent-back and the case is not rejected, cancelled or approved; or the claim status contains "Returned to NWH", "Sent back" or "Kept hold". Reply by = date asked + '+PREAUTH_REPLY_DAYS+' days at preauth stage, + '+REPLY_DAYS+' days at claim stage.',
+  'al-queries':()=>'Not paid, and either the status is "Preauthorisation … Pending", or the Trust\'s last preauth action is a pending or sent-back and the case is not rejected, cancelled or approved. Reply by = date asked + '+PREAUTH_REPLY_DAYS+' days.',
+  'al-pending':()=>'A Trust role (claim doctor, CTD or the CEO office) marked the claim "Pending" in the claim history. Reply needed = that Pending is the last row, so the hospital has not answered; reply by = date asked + '+REPLY_DAYS+' days. Replied = the hospital\'s "Updated … Pending" is the last row, so the Trust has not acted since.',
   'al-discharge':()=>'Not paid and status is "Surgery Update": surgery is posted, discharge is not. Days since = today − the surgery date in the preauth history. Amber from day '+(SURGERY_TO_DISCHARGE-9)+', red from day '+SURGERY_TO_DISCHARGE+'.',
   'al-file':()=>'Not paid and status is "Discharge Update". Window opens = discharge update date + '+CLAIM_OPENS+' days, closes = + '+CLAIM_CLOSES+' days. Red when '+CLAIM_WARN+' days or fewer are left. Discharges more than 30 days past the closing date are left out.',
   'al-trust':()=>'Not paid, no open query, and status is "Claim sent to Claim Executive", "Claim sent to Panel Doctor", "… Recommend Approval or Rejection to CTD or EO", or "… Claim Resubmitted by NWH". Waiting = today − last status date. Flagged at '+TRUST_STALL_DAYS+' days.',
@@ -568,7 +569,9 @@ function alReason(s){s=String(s||'').replace(/\s+/g,' ');const dm=/Deduction Rea
   let rem=clean(rm?rm[1]:(dm?'':s));if(/^(clai+m+ )?(approved?|recommended for approval|documw* verified.*|ok|verified)$/i.test(rem))rem='';
   const out=[ded,rem].filter(Boolean).join(' · ');return out?out.charAt(0).toUpperCase()+out.slice(1).toLowerCase():'';}
 const alMoneyTds=c=>isAdmin?'<td>'+inr0(c.preauth_amount)+'</td><td class="'+(alCut(c)?'al-r':'')+'">'+inr0(c.approved_amount)+'</td>':'';
-let alPaidF=null; // Paid list filter {y, m}; m = -1 means every month
+let alPaidF=null;
+let alPendF='open'; // Pending list: 'open' = what is live now, or a year = everything raised that year
+const alPendBy=role=>{const r=String(role||'').replace(/\s+-\s+.*$/,'').trim();return r==='PPD'?'Claim doctor':r==='CTD'?'Trust doctor (CTD)':r==='CH'?'CEO office (CH)':(r||'Trust');}; // Paid list filter {y, m}; m = -1 means every month
 const alWho=c=>'<td><div class="who">'+esc(c.patient_name||'(no name)')+'</div><div class="meta">'+esc(alCaseShort(c))+'</div></td>';
 
 async function loadAlerts(){
@@ -589,7 +592,7 @@ async function loadAlerts(){
         if(list.length){box.innerHTML='<div class="al-notice"><b>PORTAL NOTICE · seen at login '+esc(new Date(p.at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}))+'</b>'+list.map(t=>esc(t)).join('<br>')+'</div>';box.style.display='block';}
         else box.style.display='none';}
     }catch(e){}
-    const queries=all.filter(c=>alQuery(c)),disch=all.filter(alDischargePending);
+    const queries=all.filter(c=>alQuery(c)==='preauth'),disch=all.filter(alDischargePending);
     const file=all.filter(alToFile).map(c=>{const d=parseCaseDate(c.status_date);const opens=d&&new Date(d.getTime()+CLAIM_OPENS*864e5),closes=d&&new Date(d.getTime()+CLAIM_CLOSES*864e5);return{c,d,opens,closes,left:closes?alDays(now,closes):null};}).sort((a,b)=>(a.left==null?999:a.left)-(b.left==null?999:b.left));
     const ceo=all.filter(alAwaitCeo).map(c=>({c,d:alSince(c)})).sort((a,b)=>(a.d||0)-(b.d||0));
     const trust=all.filter(alWithTrust).map(c=>{const d=alSince(c);return{c,d,n:d?alDays(d,now):null};}).sort((a,b)=>(b.n==null?-1:b.n)-(a.n==null?-1:a.n));
@@ -620,15 +623,33 @@ async function loadAlerts(){
     const live=file.filter(x=>x.left==null||x.left>=-30), stale=file.filter(x=>x.left!=null&&x.left<-30);
     const overdue=live.filter(x=>x.left!=null&&x.left<0);
     const preCount=queries.filter(c=>alQuery(c)==='preauth').length;
+    // ---- claim-stage "Pending": every time a Trust role marked a claim Pending, and the hospital's reply.
+    // Read from the claim history itself rather than guessed from the status text.
+    const byCase={};all.forEach(c=>byCase[c.case_no]=c);
+    const pendRaw=[];
+    for(let o=0;;o+=1000){const {data,error}=await sb.from('claim_workflow').select('case_no,row_index,date_time,role_name,action,remarks').ilike('action','%pending%').order('case_no').order('row_index').range(o,o+999);if(error||!data)break;pendRaw.push(...data);if(data.length<1000)break;}
+    const pendBy={};pendRaw.forEach(r=>(pendBy[r.case_no]=pendBy[r.case_no]||[]).push(r));
+    const pend=[];
+    Object.keys(pendBy).forEach(k=>{const c=byCase[k];if(!c)return;const L=pendBy[k].sort((a,b)=>a.row_index-b.row_index);
+      const isLast=x=>!c.is_paid&&(c.latest_comment_date||'')===(x.date_time||'');
+      L.forEach((r,i)=>{if(!/^pending$/i.test((r.action||'').trim())||/MEDCO/i.test(r.role_name||''))return;
+        const rp=L.slice(i+1).find(x=>/MEDCO/i.test(x.role_name||'')&&/updated.*pending/i.test(x.action||''));
+        const asked=parseWfDate(r.date_time),replied=rp?parseWfDate(rp.date_time):null;
+        pend.push({c,by:alPendBy(r.role_name),asked,replied,state:!rp&&isLast(r)?'open':(rp&&isLast(rp)?'replied':'done'),q:alReason(r.remarks),replyBy:asked?new Date(asked.getTime()+REPLY_DAYS*864e5):null});});});
+    // a claim the portal marks as returned or on hold, without a Pending row, still needs a reply
+    all.filter(c=>alQuery(c)==='claim'&&!pend.some(p=>p.c===c&&p.state==='open')).forEach(c=>{const asked=parseWfDate(c.latest_comment_date);pend.push({c,by:alPendBy(c.latest_comment_by),asked,replied:null,state:'open',q:alReason(c.latest_comment),replyBy:asked?new Date(asked.getTime()+REPLY_DAYS*864e5):null});});
+    const pendOpen=pend.filter(p=>p.state==='open').sort((a,b)=>(a.replyBy||0)-(b.replyBy||0));
+    const pendReplied=pend.filter(p=>p.state==='replied').sort((a,b)=>(a.replied||0)-(b.replied||0));
+    const pendYears=[...new Set(pend.map(p=>p.asked&&p.asked.getFullYear()).filter(Boolean))].sort((a,b)=>b-a);
     const S={};
-    S.queries={cls:'red',l:'TRUST QUERIES OPEN',v:queries.length,s:preCount+' preauth · '+(queries.length-preCount)+' claim',html:()=>alCard('Trust asked a question','Reply or the case stalls',queries,'r','<th>Patient</th><th>Stage · question</th><th>Surgery</th><th>Last status</th><th>Asked</th><th>Reply by</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
+    S.queries={cls:'red',l:'PREAUTH QUERIES OPEN',v:queries.length,s:'reply within '+PREAUTH_REPLY_DAYS+' days',html:()=>alCard('Trust asked a question at preauth','Reply or the preauth stalls',queries,'r','<th>Patient</th><th>Stage · question</th><th>Surgery</th><th>Last status</th><th>Asked</th><th>Reply by</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
       c=>{const kind=alQuery(c);let asked=null,what='';
         if(kind==='preauth'){const r=preLast[c.case_no];asked=r?parseWfDate(r.date_time):null;what='Preauth · '+esc((r&&(r.role_name+' "'+r.action+'"'))||c.preauth_status||'pending');}
         else{asked=parseWfDate(c.latest_comment_date);what='Claim · '+esc(c.claim_status||'');}
         const by=asked?new Date(asked.getTime()+REPLY_DAYS*864e5):null;const left=by?alDays(now,by):null;
         const win=kind==='preauth'?PREAUTH_REPLY_DAYS:REPLY_DAYS;const by2=asked?new Date(asked.getTime()+win*864e5):null;const l2=by2?alDays(now,by2):null;
         const dueTxt=l2==null?'–':l2<0?'<span class="al-r">Overdue '+(-l2)+' d — auto-cancel/revert</span>':l2<=3?'<span class="al-r">'+l2+' days</span>':'<span class="al-a">'+l2+' days</span>';
-        return alWho(c)+'<td>'+what+'</td><td>'+esc(ddMonY(surgDate[c.case_no]))+'</td>'+alLastTd(c)+'<td>'+esc(alAgo(asked))+'</td><td>'+dueTxt+'</td>'+alMoneyTds(c);},'al-queries',[['Open queries',queries.length,queries.length?'al-r':''],['Preauth stage',preCount],['Claim stage',queries.length-preCount]])};
+        return alWho(c)+'<td>'+what+'</td><td>'+esc(ddMonY(surgDate[c.case_no]))+'</td>'+alLastTd(c)+'<td>'+esc(alAgo(asked))+'</td><td>'+dueTxt+'</td>'+alMoneyTds(c);},'al-queries',[['Open preauth queries',queries.length,queries.length?'al-r':''],['Reply within',PREAUTH_REPLY_DAYS+' days']])};
     const longStay=disch.filter(c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);return d&&alDays(d,now)>=SURGERY_TO_DISCHARGE-9;}).length;
     S.discharge={cls:longStay?'amber':'',l:'IN WARD AFTER SURGERY',v:disch.length,s:longStay+' near the 30-day discharge limit',html:()=>alCard('In ward after surgery','Post the Discharge Update the day the patient leaves',disch,longStay?'a':'','<th>Patient</th><th>Surgery</th><th>Last status</th><th>Days since</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
       c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);const n=d?alDays(d,now):null;return alWho(c)+'<td>'+esc(ddMonY(d))+'</td>'+alLastTd(c)+'<td class="'+(n!=null&&n>=SURGERY_TO_DISCHARGE?'al-r':n!=null&&n>=SURGERY_TO_DISCHARGE-9?'al-a':'al-m')+'">'+(n==null?'–':n+' day'+(n===1?'':'s')+(n>=SURGERY_TO_DISCHARGE?' — past the 30-day limit: Trust cancels':n>=SURGERY_TO_DISCHARGE-9?' — discharge update due within '+(SURGERY_TO_DISCHARGE-n)+' d':''))+'</td>'+alMoneyTds(c);},'al-discharge',[['In ward after surgery',disch.length],['Near the 30-day limit',longStay,longStay?'al-a':''],['Longest stay',(()=>{const a=disch.map(c=>{const d=surgDate[c.case_no]||parseCaseDate(c.status_date);return d?alDays(d,now):null;}).filter(v=>v!=null);return a.length?Math.max(...a)+' days':'–';})()]])};
@@ -636,6 +657,22 @@ async function loadAlerts(){
       x=>{const st=x.left==null?'–':x.opens>now?'<span class="al-m">Opens '+esc(ddMon(x.opens))+'</span>':x.left<0?'<span class="al-r">OVERDUE '+(-x.left)+' d — check auto-cancel</span>':x.left===0?'<span class="al-r">Today — last day</span>':'<span class="'+(x.left<=CLAIM_WARN?'al-r':'al-m')+'">'+x.left+' days left</span>';
         return alWho(x.c)+'<td>'+esc(ddMonY(surgDate[x.c.case_no]))+'</td><td title="'+esc(x.c.claim_status||'')+'">'+esc(ddMonY(x.d))+'</td><td>'+esc(ddMon(x.opens))+' – '+esc(ddMon(x.closes))+'</td><td>'+st+'</td>'+alMoneyTds(x.c);},'al-file',[['Claims to file',live.length],['Window not open yet',live.filter(x=>x.opens&&x.opens>now).length],['Due in '+CLAIM_WARN+' days',dueSoon.length,dueSoon.length?'al-r':''],['Overdue',overdue.length,overdue.length?'al-r':'']])
       +(stale.length?'<div class="al-empty">'+stale.length+' older discharge'+(stale.length>1?'s':'')+' (window closed over a month ago) not shown — these records predate the last scan and refresh as the sweep reaches them.</div>':'')};
+    const pendHtml=()=>{const F=alPendF,live=F==='open';
+      const rows=live?pendOpen.concat(pendReplied):pend.filter(p=>p.asked&&p.asked.getFullYear()===+F).sort((a,b)=>b.asked-a.asked);
+      alNeedSurg(rows.map(p=>p.c.case_no),'pending');
+      const filter='<div class="al-filter">Show <select id="al-pend-f"><option value="open"'+(live?' selected':'')+'>Open now</option>'+pendYears.map(y=>'<option value="'+y+'"'+(String(F)===String(y)?' selected':'')+'>Every pending raised in '+y+'</option>').join('')+'</select></div>';
+      const took=rows.filter(p=>p.asked&&p.replied).map(p=>(p.replied-p.asked)/864e5).sort((a,b)=>a-b);
+      const sum=live?[['Reply needed',pendOpen.length,pendOpen.length?'al-r':''],['Replied · waiting on the Trust',pendReplied.length],['Longest wait after reply',pendReplied.length&&pendReplied[0].replied?alDays(pendReplied[0].replied,now)+' days':'–']]
+        :[['Pendings raised in '+F,rows.length],['By the Trust doctor (CTD)',rows.filter(p=>/CTD/.test(p.by)).length],['By the claim doctor',rows.filter(p=>p.by==='Claim doctor').length],['Median days to reply',took.length?took[Math.floor(took.length/2)].toFixed(1):'–']];
+      return filter+alCard('Claim marked Pending by the Trust',live?'Reply needed first · then replied and waiting on the Trust, longest first':'Every pending raised in '+F+' · newest first',rows,pendOpen.length?'r':'','<th>Patient</th><th>Raised by</th><th>Asked</th><th>Trust\'s question</th><th>Hospital reply</th><th>Status now</th><th>Surgery</th><th>Last status</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
+        p=>{let rc;
+          if(p.state==='open'){const l=p.replyBy?alDays(now,p.replyBy):null;rc='<span class="'+(l!=null&&l<=3?'al-r':'al-a')+'">Reply by '+esc(ddMon(p.replyBy))+(l==null?'':l<0?' — overdue '+(-l)+' d':' · '+l+' day'+(l===1?'':'s')+' left')+'</span>';}
+          else if(p.replied){const t=p.asked?Math.max(0,alDays(p.asked,p.replied)):null;rc='Replied '+esc(ddMonY(p.replied))+(t==null?'':' · in '+t+' day'+(t===1?'':'s'))+(p.state==='replied'?'<div class="al-a">waiting '+alDays(p.replied,now)+' days on the Trust</div>':'');}
+          else rc='<span class="meta">No reply recorded</span>';
+          const sc=alSanctioned(p.c);
+          return alWho(p.c)+'<td>'+esc(p.by)+'</td><td>'+esc(ddMonY(p.asked))+'</td><td class="why">'+esc(p.q||'None given')+'</td><td>'+rc+'</td><td class="meta">'+esc(p.c.claim_status||'')+'</td><td>'+esc(ddMonY(surgDate[p.c.case_no]))+'</td>'+alLastTd(p.c)+(isAdmin?'<td>'+inr0(p.c.preauth_amount)+'</td><td class="'+(alCut(p.c)?'al-r':'')+'">'+inr0(sc)+'</td>':'');},
+        'al-pending',sum,live?'No claim is waiting for a reply, and none is waiting on the Trust after a reply.':'None raised in '+F+'.');};
+    S.pending={cls:pendOpen.length?'red':'',l:'CTD / CEO PENDING',v:pendOpen.length,s:pendReplied.length+' replied · waiting on the Trust',html:pendHtml};
     S.trust={cls:stalled.length?'amber':'',l:'WITH THE TRUST · NO MOVEMENT',v:stalled.length,s:'of '+trust.length+' claims with the Trust · '+TRUST_STALL_DAYS+'+ days',html:()=>alCard('With the Trust — no movement','Nothing pending with the hospital · longest waiting first · follow up with the Trust',trust,stalled.length?'a':'','<th>Patient</th><th>Stage</th><th>Surgery</th><th>Last status</th><th>Waiting</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
       x=>alWho(x.c)+'<td class="meta">'+esc(x.c.claim_status||'')+'</td><td>'+esc(ddMonY(surgDate[x.c.case_no]))+'</td><td>'+esc(ddMonY(x.d))+'</td><td class="'+(x.n!=null&&x.n>=TRUST_STALL_DAYS?'al-a':'al-m')+'">'+(x.n==null?'–':x.n+' day'+(x.n===1?'':'s')+(x.n>=TRUST_STALL_DAYS?' — no movement':''))+'</td>'+alMoneyTds(x.c),'al-trust',[['With the Trust',trust.length],['No movement '+TRUST_STALL_DAYS+'+ days',stalled.length,stalled.length?'al-a':''],['Longest wait',trust[0]&&trust[0].n!=null?trust[0].n+' days':'–'],isAdmin&&['Claimed value',inrShortW(trust.reduce((t,x)=>t+(x.c.claimed_amount||0),0))]])};
     S.ceo={cls:'',l:'AWAITING CEO',v:ceo.length,s:isAdmin?inrShortW(ceo.reduce((t,x)=>t+(x.c.claimed_amount||0),0)):'',html:()=>alCard('Awaiting CEO','Longest waiting first',ceo,'','<th>Patient</th><th>Surgery</th><th>Last status</th><th>Waiting</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
@@ -646,10 +683,11 @@ async function loadAlerts(){
     const paidAll=all.map(c=>({c,d:alPaidDate(c)})).filter(x=>x.d).sort((a,b)=>b.d-a.d);
     const paidYears=[...new Set(paidAll.map(x=>x.d.getFullYear()))].sort((a,b)=>b-a);if(!paidYears.includes(now.getFullYear()))paidYears.unshift(now.getFullYear());
     if(!alPaidF)alPaidF={y:now.getFullYear(),m:paidM.length?now.getMonth():-1};
-    const paidSurgAsked=new Set();
-    const paidNeedSurg=rows=>{const ids=rows.map(x=>x.c.case_no).filter(id=>!surgDate[id]&&!paidSurgAsked.has(id));if(!ids.length)return;ids.forEach(id=>paidSurgAsked.add(id));
+    const surgAsked=new Set();
+    const alNeedSurg=(ids,key)=>{ids=ids.filter(id=>!surgDate[id]&&!surgAsked.has(id));if(!ids.length)return;ids.forEach(id=>surgAsked.add(id));
       (async()=>{for(let i=0;i<ids.length;i+=150){const {data:sd}=await sb.from('preauth_workflow').select('case_no,date_time,action').in('case_no',ids.slice(i,i+150)).ilike('action','%surgery%');(sd||[]).forEach(r=>{const d=parseWfDate(r.date_time);if(d&&(!surgDate[r.case_no]||d>surgDate[r.case_no]))surgDate[r.case_no]=d;});}
-        if(alCurrent==='paid')alShow('paid');})();};
+        if(alCurrent===key)alShow(key);})();};
+    const paidNeedSurg=rows=>alNeedSurg(rows.map(x=>x.c.case_no),'paid');
     const paidHtml=()=>{const F=alPaidF,inY=paidAll.filter(x=>x.d.getFullYear()===F.y),rows=F.m<0?inY:inY.filter(x=>x.d.getMonth()===F.m);
       const amt=a=>a.reduce((t,x)=>t+(x.c.paid_amount||0),0),period=(F.m<0?'':alMon[F.m]+' ')+F.y;
       const filter='<div class="al-filter">'+(F.m>=0?'<a class="al-back" data-paid-all>‹ '+F.y+' by month</a>':'')+'Year <select id="al-paid-y">'+paidYears.map(y=>'<option value="'+y+'"'+(y===F.y?' selected':'')+'>'+y+'</option>').join('')+'</select> Month <select id="al-paid-m"><option value="-1"'+(F.m<0?' selected':'')+'>All months</option>'+alMon.map((mn,i)=>'<option value="'+i+'"'+(i===F.m?' selected':'')+'>'+mn+'</option>').join('')+'</select></div>';
@@ -671,18 +709,18 @@ async function loadAlerts(){
         [['Cut this year',inr0(total),'al-r'],['Claims cut',cutRows.length],['Share of preauth',pct+'% of '+inrShortW(preTot)],['Biggest cut',inr0(cutRows.reduce((m,c)=>Math.max(m,alCut(c)),0))]],'No claim this year was approved below its preauth amount.')};
     }
     alSections=S;
-    const order=['queries','discharge','file','trust','ceo','approved','paid','money'].filter(k=>S[k]);
-    const RL={queries:'Trust queries open',discharge:'In ward after surgery',file:'Claims to file',trust:'No movement '+TRUST_STALL_DAYS+'+ days',ceo:'Awaiting CEO',approved:'CEO approved',paid:'Paid this month',money:'Preauth cut '+now.getFullYear()};
-    const groups=[['HOSPITAL MUST ACT',['queries','discharge','file']],['WAITING ON THE TRUST',['trust','ceo','approved']],['MONEY',['paid','money']]];
+    const order=['queries','discharge','file','pending','trust','ceo','approved','paid','money'].filter(k=>S[k]);
+    const RL={pending:'CTD / CEO pending',queries:'Preauth queries open',discharge:'In ward after surgery',file:'Claims to file',trust:'No movement '+TRUST_STALL_DAYS+'+ days',ceo:'Awaiting CEO',approved:'CEO approved',paid:'Paid this month',money:'Preauth cut '+now.getFullYear()};
+    const groups=[['HOSPITAL MUST ACT',['queries','discharge','file','pending']],['WAITING ON THE TRUST',['trust','ceo','approved']],['MONEY',['paid','money']]];
     $('al-kpis').innerHTML=groups.map(g=>{const ks=g[1].filter(k=>S[k]);return ks.length?'<div class="al-grp">'+g[0]+'</div>'+ks.map(k=>'<div class="al-kpi '+S[k].cls+'" data-go="'+k+'"><div class="l"><span class="l-t">'+S[k].l+'</span><span class="l-r">'+esc(RL[k])+'</span></div><div class="v">'+S[k].v+'</div><div class="s">'+S[k].s+'</div></div>').join(''):'';}).join('');
-    const badge=queries.length+dueSoon.length+overdue.length;
+    const badge=queries.length+dueSoon.length+overdue.length+pendOpen.length;
     $('alerts-badge').textContent=badge;$('alerts-badge').style.display=badge?'inline':'none';
     // say what that number is: each part links to its list
     const pl=(k,one,many)=>k+' '+(k===1?one:many);
-    const parts=[queries.length&&['queries',pl(queries.length,'Trust query','Trust queries')+' open'],dueSoon.length&&['file',pl(dueSoon.length,'claim','claims')+' due in '+CLAIM_WARN+' days or less'],overdue.length&&['file',pl(overdue.length,'claim','claims')+' past the filing deadline']].filter(Boolean);
+    const parts=[queries.length&&['queries',pl(queries.length,'preauth query','preauth queries')+' open'],pendOpen.length&&['pending',pl(pendOpen.length,'claim','claims')+' marked Pending by the Trust'],dueSoon.length&&['file',pl(dueSoon.length,'claim','claims')+' due in '+CLAIM_WARN+' days or less'],overdue.length&&['file',pl(overdue.length,'claim','claims')+' past the filing deadline']].filter(Boolean);
     const act=$('al-action');
     act.className='al-action'+(badge?'':' ok');
-    act.innerHTML=badge?'<b>'+badge+'</b> '+(badge===1?'needs':'need')+' action today: '+parts.map(p=>'<a data-go-list="'+p[0]+'">'+esc(p[1])+'</a>').join(' · '):'Nothing needs action today. No open Trust query, and no claim within '+CLAIM_WARN+' days of its filing deadline.';
+    act.innerHTML=badge?'<b>'+badge+'</b> '+(badge===1?'needs':'need')+' action today: '+parts.map(p=>'<a data-go-list="'+p[0]+'">'+esc(p[1])+'</a>').join(' · '):'Nothing needs action today. No open preauth query, no claim marked Pending, and no claim within '+CLAIM_WARN+' days of its filing deadline.';
     act.style.display='block';
     $('alerts-badge').title=parts.map(p=>p[1]).join(', ');
     alShow(alCurrent&&S[alCurrent]?alCurrent:(order.find(k=>typeof S[k].v==='number'&&S[k].v>0)||order[0]));
@@ -701,7 +739,7 @@ document.addEventListener('click',e=>{
   const tr=e.target.closest('#al-content tr[data-case]');if(tr&&tr.dataset.case)showDetail(tr.dataset.case);
 });
 
-document.addEventListener('change',e=>{if(!alPaidF)return;if(e.target.id==='al-paid-y'){alPaidF.y=+e.target.value;alShow('paid');}else if(e.target.id==='al-paid-m'){alPaidF.m=+e.target.value;alShow('paid');}});
+document.addEventListener('change',e=>{if(e.target.id==='al-pend-f'){alPendF=e.target.value;alShow('pending');return;}if(!alPaidF)return;if(e.target.id==='al-paid-y'){alPaidF.y=+e.target.value;alShow('paid');}else if(e.target.id==='al-paid-m'){alPaidF.m=+e.target.value;alShow('paid');}});
 
 // ---- settings (admin-only): update the portal password without touching .env ----
 async function loadSettings(){
