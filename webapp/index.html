@@ -479,7 +479,11 @@ $('logout-btn').addEventListener('click',async()=>{await sb.auth.signOut();locat
 let isAdmin=false;
 async function showApp(){
   $('login').style.display='none';$('app').style.display='block';
-  try{const {data}=await sb.auth.getUser();isAdmin=((data.user&&data.user.email)||'').trim().toLowerCase()==='admin@vvistech.com';}catch(e){isAdmin=false;}
+  // Who sees rupee figures: role 'doctor' in the user_roles table - the same switch the phone app reads.
+  // The fixed email is only the fallback if that lookup fails, so the owner is never locked out.
+  try{const {data}=await sb.auth.getUser();const usr=data.user;isAdmin=((usr&&usr.email)||'').trim().toLowerCase()==='admin@vvistech.com';
+    if(usr){const {data:r}=await sb.from('user_roles').select('role').eq('user_id',usr.id).maybeSingle();if(r&&(r.role==='doctor'||r.role==='scribe'))isAdmin=r.role==='doctor';}
+  }catch(e){}
   init();
 }
 
