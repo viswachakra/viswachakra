@@ -309,7 +309,7 @@
       <div class="kpi"><div class="l">Paid / credited</div><div class="v green" id="k-paid">–</div></div>
     </div>
     <div class="toolbar">
-      <input type="text" id="q" placeholder="Search case no, claim no, patient, card no, phone...">
+      <input type="text" id="q" placeholder="Search case no, claim no, patient, card, phone — several with commas">
       <select id="cases-pay"><option value="">All cases</option><option value="unpaid">Unpaid only</option><option value="paid">Paid only</option></select>
       <select id="status"><option value="">All statuses</option></select>
       <select id="cases-month" title="Registration month"><option value="">Any registration month</option></select>
@@ -344,7 +344,7 @@
     <div id="cm-loading" class="empty" style="padding:60px">Building the claims register…</div>
     <div id="cm-content" style="display:none">
       <div class="toolbar">
-        <input type="text" id="cm-q" placeholder="Search case, patient, claim, card, phone...">
+        <input type="text" id="cm-q" placeholder="Search case, patient, claim, card, phone — several with commas">
         <select id="cm-pay"><option value="">All cases</option><option value="unpaid">Unpaid only</option><option value="paid">Paid only</option></select>
         <select id="cm-status"><option value="">All statuses</option></select>
         <select id="cm-month" title="Registration month"><option value="">Any registration month</option></select>
@@ -517,6 +517,10 @@ const AL_COLS='case_no,patient_name,claim_status,status_date,claimed_amount,appr
 //   preauth pending reply 10 d, surgery -> discharge 30 d, preauth approved -> surgery 30 d,
 //   IP registered -> preauth initiated 7 d (portal warns at 72 h).
 const CLAIM_OPENS=11,CLAIM_CLOSES=21,CLAIM_WARN=3,REPLY_DAYS=14,PREAUTH_REPLY_DAYS=10,SURGERY_TO_DISCHARGE=30,PREAUTH_TO_SURGERY=30,TRUST_STALL_DAYS=30;
+// Search boxes take several values at once - "AP14273488, AP14304915" - separated by commas,
+// semicolons or new lines; a row matches when it contains ANY of them.
+const qTerms=q=>String(q||'').toLowerCase().split(/[,;\n]+/).map(t=>t.trim()).filter(Boolean);
+const qHit=(text,terms)=>!terms.length||terms.some(t=>text.includes(t));
 let alertsAll=null,alertsAt=0,alSections={},alCurrent=null;
 // A page left open all day must not keep showing the morning's alerts (6 Nov 2026: two claims
 // filed at 3 pm were still on a staff screen at 6 pm). The data is re-read when it is older
@@ -1151,7 +1155,7 @@ function casesFilteredRows(){
   if(st)rows=rows.filter(r=>r.status===st);
   if(mon)rows=rows.filter(r=>ymOf(r.ip_reg)===mon);
   if(from!=null||to!=null)rows=rows.filter(r=>{const t=dmy(r.ip_reg);if(!t)return false;if(from!=null&&t<from)return false;if(to!=null&&t>to)return false;return true;});
-  if(q)rows=rows.filter(r=>((r.case_no||'')+' '+(r.patient_name||'')+' '+(r.claim_no||'')+' '+(r.card_no||'')+' '+(r.contact_no||'')).toLowerCase().includes(q));
+  if(q){const tq=qTerms(q);rows=rows.filter(r=>qHit(((r.case_no||'')+' '+(r.patient_name||'')+' '+(r.claim_no||'')+' '+(r.card_no||'')+' '+(r.contact_no||'')).toLowerCase(),tq));}
   return sortRows(rows,casesSort);
 }
 function setupCasesFilters(){
@@ -1280,7 +1284,7 @@ function cmFilteredRows(){
   if(st)rows=rows.filter(r=>r._status===st);
   if(mon)rows=rows.filter(r=>ymOf(r._ip_reg)===mon);
   if(from!=null||to!=null)rows=rows.filter(r=>{const t=dmy(r._ip_reg);if(!t)return false;if(from!=null&&t<from)return false;if(to!=null&&t>to)return false;return true;});
-  if(q)rows=rows.filter(r=>r._search.includes(q));
+  if(q){const tq=qTerms(q);rows=rows.filter(r=>qHit(r._search,tq));}
   return sortCm(rows,cmSort);
 }
 function saveCols(){localStorage.setItem('vc-cm-hidden',JSON.stringify([...cmHidden]));}
