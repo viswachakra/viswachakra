@@ -139,6 +139,7 @@
   .al-sum>div{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px}
   .al-sum .l{font-size:10.5px;letter-spacing:.4px;font-weight:700;color:var(--text-3);text-transform:uppercase}.al-sum .v{font-size:20px;font-weight:800;margin-top:3px}.al-sum .v.sm{font-size:13px;font-weight:600;line-height:1.5}
   .al-filter{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:12.5px;color:var(--text-2)}
+  .al-back{color:var(--primary);font-weight:600;cursor:pointer;margin-right:8px;padding:7px 12px;border:1px solid var(--border-strong);border-radius:9px;background:var(--card)}.al-back:hover{background:var(--primary-light)}
   .al-filter select{padding:7px 10px;border:1px solid var(--border-strong);border-radius:9px;font-size:13px;background:var(--card);color:var(--text);font-family:inherit}
   .al-card{overflow-x:auto}.al-t td.why{color:var(--text-2);font-size:12px;max-width:380px}
   @media(min-width:1100px){
@@ -649,7 +650,7 @@ async function loadAlerts(){
         if(alCurrent==='paid')alShow('paid');})();};
     const paidHtml=()=>{const F=alPaidF,inY=paidAll.filter(x=>x.d.getFullYear()===F.y),rows=F.m<0?inY:inY.filter(x=>x.d.getMonth()===F.m);
       const amt=a=>a.reduce((t,x)=>t+(x.c.paid_amount||0),0),period=(F.m<0?'':alMon[F.m]+' ')+F.y;
-      const filter='<div class="al-filter">Year <select id="al-paid-y">'+paidYears.map(y=>'<option value="'+y+'"'+(y===F.y?' selected':'')+'>'+y+'</option>').join('')+'</select> Month <select id="al-paid-m"><option value="-1"'+(F.m<0?' selected':'')+'>All months</option>'+alMon.map((mn,i)=>'<option value="'+i+'"'+(i===F.m?' selected':'')+'>'+mn+'</option>').join('')+'</select></div>';
+      const filter='<div class="al-filter">'+(F.m>=0?'<a class="al-back" data-paid-all>‹ '+F.y+' by month</a>':'')+'Year <select id="al-paid-y">'+paidYears.map(y=>'<option value="'+y+'"'+(y===F.y?' selected':'')+'>'+y+'</option>').join('')+'</select> Month <select id="al-paid-m"><option value="-1"'+(F.m<0?' selected':'')+'>All months</option>'+alMon.map((mn,i)=>'<option value="'+i+'"'+(i===F.m?' selected':'')+'>'+mn+'</option>').join('')+'</select></div>';
       const sum=[['Claims paid · '+period,rows.length,'al-g'],isAdmin&&['Received · '+period,inrShortW(amt(rows)),'al-g'],['Last payment',paidAll.length?ddMonY(paidAll[0].d):'–'],F.m>=0&&['Claims paid · '+F.y,inY.length],F.m>=0&&isAdmin&&['Received · '+F.y,inrShortW(amt(inY))]];
       let out=filter;
       if(F.m<0){const bm={};inY.forEach(x=>{const k=x.d.getMonth();(bm[k]=bm[k]||{m:k,n:0,amt:0,last:x.d});bm[k].n++;bm[k].amt+=x.c.paid_amount||0;if(x.d>bm[k].last)bm[k].last=x.d;});
@@ -684,6 +685,7 @@ function inrShortW(v){v=Math.round(v||0);if(v>=1e7)return '₹'+(v/1e7).toFixed(
 document.addEventListener('click',e=>{
   const more=e.target.closest('.al-more');if(more){const card=$(more.dataset.more);if(card){card.querySelectorAll('.al-hid').forEach(tr=>tr.style.display='');more.remove();}return;}
   const kpi=e.target.closest('.al-kpi');if(kpi){alShow(kpi.dataset.go);return;}
+  const pb=e.target.closest('[data-paid-all]');if(pb&&alPaidF){alPaidF.m=-1;alShow('paid');return;}
   const pm=e.target.closest('tr[data-paid-m]');if(pm&&alPaidF){alPaidF.m=+pm.dataset.paidM;alShow('paid');return;}
   const tr=e.target.closest('#al-content tr[data-case]');if(tr&&tr.dataset.case)showDetail(tr.dataset.case);
 });
