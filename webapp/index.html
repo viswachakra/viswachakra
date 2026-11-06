@@ -179,6 +179,7 @@
   .al-more{padding:9px 16px;color:var(--primary);font-size:12px;border-top:1px solid var(--border);cursor:pointer;font-weight:600}
   .al-empty{padding:16px;color:var(--text-3);font-size:12.5px}
   .al-pipe{display:flex;gap:8px;margin-bottom:12px}.al-pipe .card{flex:1;text-align:center;padding:14px 8px}.al-pipe .v{font-size:24px;font-weight:800}.al-pipe small{display:block;font-size:11px;color:var(--text-3);margin-top:2px}.al-pipe .arrow{align-self:center;color:var(--text-3);font-size:20px}
+  .al-loaded{font-size:12px;color:var(--text-3)}.al-refresh{font-size:12.5px;font-weight:600;color:var(--primary);cursor:pointer;margin-left:auto}
   .al-action{background:var(--red-bg);color:var(--red-fg);border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:14px;font-weight:600}
   .al-action b{font-weight:800}.al-action a{color:inherit;text-decoration:underline;cursor:pointer}.al-action.ok{background:var(--green-bg,#d7f5e3);color:var(--green-fg)}
   .al-notice{background:var(--amber-bg);color:var(--amber-fg);border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;line-height:1.5}.al-notice b{display:block;font-size:11px;letter-spacing:.4px;margin-bottom:3px}
@@ -286,7 +287,7 @@
 
   <!-- ===== Alerts: the doctor's morning screen (his eight requirements, 2026-11) ===== -->
   <main id="view-alerts" style="display:none">
-    <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span></div>
+    <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span><span id="al-loaded" class="al-loaded"></span><a id="al-refresh" class="al-refresh">↻ Refresh</a></div>
     <!-- what the red number on the Alerts tab is made of -->
     <div id="al-action" class="al-action" style="display:none"></div>
     <div id="al-notices" style="display:none"></div>
@@ -516,7 +517,15 @@ const AL_COLS='case_no,patient_name,claim_status,status_date,claimed_amount,appr
 //   preauth pending reply 10 d, surgery -> discharge 30 d, preauth approved -> surgery 30 d,
 //   IP registered -> preauth initiated 7 d (portal warns at 72 h).
 const CLAIM_OPENS=11,CLAIM_CLOSES=21,CLAIM_WARN=3,REPLY_DAYS=14,PREAUTH_REPLY_DAYS=10,SURGERY_TO_DISCHARGE=30,PREAUTH_TO_SURGERY=30,TRUST_STALL_DAYS=30;
-let alertsAll=null,alSections={},alCurrent=null;
+let alertsAll=null,alertsAt=0,alSections={},alCurrent=null;
+// A page left open all day must not keep showing the morning's alerts (6 Nov 2026: two claims
+// filed at 3 pm were still on a staff screen at 6 pm). The data is re-read when it is older
+// than AL_STALE_MS: every 5 minutes while the Alerts page is on screen, and whenever the
+// browser tab is looked at again.
+const AL_STALE_MS=5*60*1000;
+function alRefresh(force){if($('view-alerts').style.display==='none'||$('app').style.display==='none')return;if(!force&&Date.now()-alertsAt<AL_STALE_MS)return;alertsAll=null;loadAlerts();}
+setInterval(()=>{if(document.visibilityState==='visible')alRefresh(false);},60*1000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')alRefresh(false);});
 function alShow(key){const sec=alSections[key];if(!sec)return;alCurrent=key;$('al-detail').innerHTML=sec.html();document.querySelectorAll('.al-kpi').forEach(t=>t.classList.toggle('on',t.dataset.go===key));}
 const alRx=(s,p)=>new RegExp(p,'i').test(s||'');
 const alDay=d=>d?new Date(d.getFullYear(),d.getMonth(),d.getDate()):null;
@@ -576,7 +585,8 @@ const alWho=c=>'<td><div class="who">'+esc(c.patient_name||'(no name)')+'</div><
 
 async function loadAlerts(){
   try{
-    if(!alertsAll)alertsAll=await fetchAllPar('cases',AL_COLS);
+    if(!alertsAll||Date.now()-alertsAt>AL_STALE_MS){alertsAll=await fetchAllPar('cases',AL_COLS);alertsAt=Date.now();}
+    $('al-loaded').textContent='· page updated '+new Date(alertsAt).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
     const all=alertsAll,now=new Date();
     $('al-date').textContent=now.toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'});
     const newest=all.reduce((m,c)=>c.last_synced&&c.last_synced>m?c.last_synced:m,'');
@@ -732,6 +742,7 @@ document.addEventListener('click',e=>{
   const more=e.target.closest('.al-more');if(more){const card=$(more.dataset.more);if(card){card.querySelectorAll('.al-hid').forEach(tr=>tr.style.display='');more.remove();}return;}
   const kpi=e.target.closest('.al-kpi');if(kpi){alShow(kpi.dataset.go);return;}
   const gl=e.target.closest('[data-go-list]');if(gl){alShow(gl.dataset.goList);return;}
+  if(e.target.closest('#al-refresh')){alRefresh(true);return;}
   const pb=e.target.closest('[data-paid-all]');if(pb&&alPaidF){alPaidF.m=-1;alShow('paid');return;}
   const pm=e.target.closest('tr[data-paid-m]');if(pm&&alPaidF){alPaidF.m=+pm.dataset.paidM;alShow('paid');return;}
   const tr=e.target.closest('#al-content tr[data-case]');if(tr&&tr.dataset.case)showDetail(tr.dataset.case);
