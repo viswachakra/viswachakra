@@ -56,7 +56,7 @@ $env:HEADLESS = 'true'
 $scraped = Invoke-WithDeadline 'node scraper.js --hours 2 --headless' $ScraperMinutes 'scraper'
 
 if ($scraped) {
-  Invoke-WithDeadline 'node push-to-supabase.js --since-minutes 130' $PushMinutes 'push' | Out-Null
+  Invoke-WithDeadline 'node push-to-supabase.js --since-minutes 130 --since-last-push' $PushMinutes 'push' | Out-Null
 } else {
   # The scraper was killed mid-flight, so its SQLite writes are partial and the
   # --since-minutes window would push an inconsistent slice. Skip and let the

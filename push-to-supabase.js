@@ -4,6 +4,8 @@
 require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 const { createClient } = require('@supabase/supabase-js');
 const { db } = require('./db');
+const fs = require('fs');
+const PUSH_STAMP = require('path').join(__dirname, 'logs', 'last-push.txt');
 
 const URL = process.env.SUPABASE_URL;
 const KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -89,7 +91,21 @@ async function main() {
   const supabase = createClient(URL, KEY, { auth: { persistSession: false } });
 
   // optional: only push rows synced in the last N minutes (used for incremental per-chunk pushes)
-  const sinceMin = arg('since-minutes') ? parseInt(arg('since-minutes'), 10) : null;
+  let sinceMin = arg('since-minutes') ? parseInt(arg('since-minutes'), 10) : null;
+  // --since-last-push: reach back to the last push that FINISHED, however long ago.
+  // A fixed window loses data whenever a run is killed between scraping and pushing
+  // (6 Nov 2026: three runs in a row scraped fine and pushed nothing).
+  const pushStarted = new Date();
+  if (process.argv.includes('--since-last-push')) {
+    let back = sinceMin || 130;
+    try {
+      const last = new Date(fs.readFileSync(PUSH_STAMP, 'utf8').trim());
+      if (!isNaN(last.getTime())) back = Math.max(back, Math.ceil((pushStarted - last) / 60000) + 15);
+    } catch (e) { /* first run: no stamp yet */ }
+    sinceMin = Math.min(back, 14 * 24 * 60);
+    console.log(`  [pushing everything scraped in the last ${sinceMin} min]`);
+  }
+  const stamp = () => { try { fs.writeFileSync(PUSH_STAMP, pushStarted.toISOString()); } catch (e) { /* not fatal */ } };
   let cases, workflow, preauth, notes;
   const PRE_SQL = 'SELECT case_no, row_index, date_time, role_name, remarks, action, amount FROM preauth_workflow';
   const NOTES_SQL = 'SELECT case_no, clinical_id, note_date, ward_type, progress_notes FROM clinical_notes';
@@ -117,7 +133,7 @@ async function main() {
     if (runs.length) { const { error } = await supabase.from('sync_runs').insert(runs); if (error) console.log('  (sync_runs mirror skipped:', error.message, ')'); }
   } catch (e) { console.log('  (sync_runs mirror error:', e.message, ')'); }
 
-  if (!cases.length) { console.log('Nothing new to push.'); return; }
+  if (!cases.length) { console.log('Nothing new to push.'); stamp(); return; }
 
   // merge precomputed summary columns into each case from its workflow rows
   const byCase = {};
@@ -175,6 +191,7 @@ async function main() {
     catch (e) { console.log(`  (${table} not pushed: ${e.message.split('\n')[0]} - run supabase-preauth-clinical.sql)`); }
   }
 
+  stamp();
   console.log('Done. Supabase is up to date.');
 }
 
