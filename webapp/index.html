@@ -282,7 +282,7 @@
     </div>
   </header>
 
-  <!-- ===== Alerts: the doctor's morning screen (his nine requirements, 2026-11) ===== -->
+  <!-- ===== Alerts: the doctor's morning screen (his eight requirements, 2026-11) ===== -->
   <main id="view-alerts" style="display:none">
     <div class="al-top"><h1 id="al-date">Alerts</h1><span id="al-fresh" class="al-fresh">–</span></div>
     <div id="al-notices" style="display:none"></div>
@@ -502,7 +502,6 @@ function switchView(v){
 //  4 discharge pending: Surgery Update posted, no Discharge Update yet
 //  5,6,7 awaiting CEO / CEO approved / paid this month
 //  8 preauth_amount vs sanctioned (paid if paid, else approved) - doctor only
-//  9 in-ward patients (PPD Approved / Surgery Update) whose notes_last_date is not today
 const AL_COLS='case_no,patient_name,claim_status,status_date,claimed_amount,approved_amount,paid_amount,paid_date,is_paid,preauth_amount,preauth_status,preauth_query_open,notes_last_date,notes_count,latest_comment,latest_comment_by,latest_comment_date,last_synced';
 // Trust time limits for a PRIVATE hospital (Revised limits effective 20 Jan 2025):
 //   discharge -> claim 21 d (opens day 11 per the doctor), claim-stage pending reply 14 d,
@@ -518,8 +517,6 @@ const alMon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','
 const ddMon=d=>d?d.getDate()+' '+alMon[d.getMonth()]:'–';
 const ddMonY=d=>d?d.getDate()+' '+alMon[d.getMonth()]+' '+String(d.getFullYear()).slice(2):'–';
 const inr0=n=>n==null?'–':'₹'+Number(n).toLocaleString('en-IN');
-const alInWard=c=>!c.is_paid&&alRx(c.claim_status,'Preauthorisation PPD Approved|^Surgery Update');
-const alNotesMissing=c=>alInWard(c)&&(c.notes_last_date||'')!==fmtD(new Date());
 const alDischargePending=c=>!c.is_paid&&alRx(c.claim_status,'^Surgery Update');
 const alToFile=c=>!c.is_paid&&alRx(c.claim_status,'^Discharge Update');
 const alQuery=c=>c.is_paid?null:((alRx(c.claim_status,'^Preauthorisation .*Pending')||(c.preauth_query_open&&!alRx(c.claim_status,'Reject|Cancel|Approved|Update|^Claim|CEO')))?'preauth':(alRx(c.claim_status,'returned to nwh|sent back|kept hold')?'claim':null));
@@ -538,7 +535,6 @@ const alCaseShort=c=>String(c.case_no||'').replace(/^CASE\/\d+\//,'');
 
 // the rule behind each list, in plain words, shown under its title. Keep in step with the al* filters above.
 const AL_RULES={
-  'al-notes':()=>'Patients whose status is "Preauthorisation PPD Approved" or "Surgery Update" and who have no clinical note dated today. When the portal\'s own login list was captured today, that list is used instead.',
   'al-queries':()=>'Not paid, and one of: the status is "Preauthorisation … Pending"; or the Trust\'s last preauth action is a pending or sent-back and the case is not rejected, cancelled or approved; or the claim status contains "Returned to NWH", "Sent back" or "Kept hold". Reply by = date asked + '+PREAUTH_REPLY_DAYS+' days at preauth stage, + '+REPLY_DAYS+' days at claim stage.',
   'al-discharge':()=>'Not paid and status is "Surgery Update": surgery is posted, discharge is not. Days since = today − the surgery date in the preauth history. Amber from day '+(SURGERY_TO_DISCHARGE-9)+', red from day '+SURGERY_TO_DISCHARGE+'.',
   'al-file':()=>'Not paid and status is "Discharge Update". Window opens = discharge update date + '+CLAIM_OPENS+' days, closes = + '+CLAIM_CLOSES+' days. Red when '+CLAIM_WARN+' days or fewer are left. Discharges more than 30 days past the closing date are left out.',
@@ -566,12 +562,6 @@ function alReason(s){s=String(s||'').replace(/\s+/g,' ');const dm=/Deduction Rea
 const alMoneyTds=c=>isAdmin?'<td>'+inr0(c.preauth_amount)+'</td><td class="'+(alCut(c)?'al-r':'')+'">'+inr0(c.approved_amount)+'</td>':'';
 let alPaidF=null; // Paid list filter {y, m}; m = -1 means every month
 const alWho=c=>'<td><div class="who">'+esc(c.patient_name||'(no name)')+'</div><div class="meta">'+esc(alCaseShort(c))+'</div></td>';
-function alDots(c){
-  // plain words beat a dot strip: what is known, and what is missing today
-  const today=ddMon(new Date());
-  if(!c.notes_count)return '<span class="al-r">No note for '+today+'</span><div class="meta">earlier notes not read yet</div>';
-  return '<span class="al-r">No note for '+today+'</span><div class="meta">'+c.notes_count+' day'+(c.notes_count>1?'s':'')+' posted · last '+esc(c.notes_last_date||'')+'</div>';
-}
 
 async function loadAlerts(){
   try{
@@ -591,17 +581,6 @@ async function loadAlerts(){
         if(list.length){box.innerHTML='<div class="al-notice"><b>PORTAL NOTICE · seen at login '+esc(new Date(p.at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}))+'</b>'+list.map(t=>esc(t)).join('<br>')+'</div>';box.style.display='block';}
         else box.style.display='none';}
     }catch(e){}
-    const ward=all.filter(alInWard);
-    // the portal's own list ("Cases for which Clinical Notes is not Updated today"),
-    // captured by the scraper at every login - authoritative when it is from today
-    let notes=all.filter(alNotesMissing),notesSrc='derived from scraped notes';
-    try{
-      const {data:ns}=await sb.from('app_settings').select('value,updated_at').eq('key','notes_missing_today').maybeSingle();
-      if(ns&&ns.value){const p=JSON.parse(ns.value);const at=new Date(p.at||ns.updated_at);
-        if(fmtD(at)===fmtD(now)){const set=new Set(p.cases||[]);const byBare={};all.forEach(c=>byBare[alCaseShort(c)]=c);
-          notes=[...set].map(k=>byBare[k]||{case_no:'CASE/5722/'+k,patient_name:'(not in database yet)',claim_status:'',notes_count:0});
-          notesSrc='per portal at '+at.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});}}
-    }catch(e){}
     const queries=all.filter(c=>alQuery(c)),disch=all.filter(alDischargePending);
     const file=all.filter(alToFile).map(c=>{const d=parseCaseDate(c.status_date);const opens=d&&new Date(d.getTime()+CLAIM_OPENS*864e5),closes=d&&new Date(d.getTime()+CLAIM_CLOSES*864e5);return{c,d,opens,closes,left:closes?alDays(now,closes):null};}).sort((a,b)=>(a.left==null?999:a.left)-(b.left==null?999:b.left));
     const ceo=all.filter(alAwaitCeo).map(c=>({c,d:alSince(c)})).sort((a,b)=>(a.d||0)-(b.d||0));
@@ -615,7 +594,7 @@ async function loadAlerts(){
     // when was each preauth query asked? (last row of its preauth workflow)
     // real surgery dates for the discharge-pending list (from the preauth workflow)
     const surgDate={};
-    const surgIds=[...new Set(disch.map(c=>c.case_no).concat(notes.map(c=>c.case_no),queries.map(c=>c.case_no),file.map(x=>x.c.case_no),appr.map(x=>x.c.case_no),ceo.map(x=>x.c.case_no),trust.map(x=>x.c.case_no),isAdmin?cutRows.map(c=>c.case_no):[]))];
+    const surgIds=[...new Set(disch.map(c=>c.case_no).concat(queries.map(c=>c.case_no),file.map(x=>x.c.case_no),appr.map(x=>x.c.case_no),ceo.map(x=>x.c.case_no),trust.map(x=>x.c.case_no),isAdmin?cutRows.map(c=>c.case_no):[]))];
     for(let i=0;i<surgIds.length;i+=150){const {data:sd}=await sb.from('preauth_workflow').select('case_no,date_time,action').in('case_no',surgIds.slice(i,i+150)).ilike('action','%surgery%');(sd||[]).forEach(r=>{const d=parseWfDate(r.date_time);if(d&&(!surgDate[r.case_no]||d>surgDate[r.case_no]))surgDate[r.case_no]=d;});}
     cutRows.sort((a,b)=>(surgDate[b.case_no]||0)-(surgDate[a.case_no]||0)||alCut(b)-alCut(a));
     // why each was cut: the first Trust row in the claim history that carries an amount below preauth
@@ -634,8 +613,6 @@ async function loadAlerts(){
     const overdue=live.filter(x=>x.left!=null&&x.left<0);
     const preCount=queries.filter(c=>alQuery(c)==='preauth').length;
     const S={};
-    S.notes={cls:'red',l:'NOTES MISSING TODAY',v:notes.length,s:notesSrc,html:()=>alCard('Clinical notes missing','No note for '+ddMon(now)+' · '+notesSrc,notes,'r','<th>Patient</th><th>Status</th><th>Surgery</th><th>Last status</th><th>Clinical notes</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
-      c=>alWho(c)+'<td class="meta">'+esc(c.claim_status||'')+'</td><td>'+esc(ddMonY(surgDate[c.case_no]))+'</td>'+alLastTd(c)+'<td>'+alDots(c)+'</td>'+alMoneyTds(c),'al-notes',[['Missing today',notes.length,'al-r'],['Patients in ward',ward.length],['Source',esc(notesSrc),'sm']])};
     S.queries={cls:'red',l:'TRUST QUERIES OPEN',v:queries.length,s:preCount+' preauth · '+(queries.length-preCount)+' claim',html:()=>alCard('Trust asked a question','Reply or the case stalls',queries,'r','<th>Patient</th><th>Stage · question</th><th>Surgery</th><th>Last status</th><th>Asked</th><th>Reply by</th>'+(isAdmin?'<th>Preauth</th><th>Approved</th>':''),
       c=>{const kind=alQuery(c);let asked=null,what='';
         if(kind==='preauth'){const r=preLast[c.case_no];asked=r?parseWfDate(r.date_time):null;what='Preauth · '+esc((r&&(r.role_name+' "'+r.action+'"'))||c.preauth_status||'pending');}
@@ -686,11 +663,11 @@ async function loadAlerts(){
         [['Cut this year',inr0(total),'al-r'],['Claims cut',cutRows.length],['Share of preauth',pct+'% of '+inrShortW(preTot)],['Biggest cut',inr0(cutRows.reduce((m,c)=>Math.max(m,alCut(c)),0))]],'No claim this year was approved below its preauth amount.')};
     }
     alSections=S;
-    const order=['notes','queries','discharge','file','trust','ceo','approved','paid','money'].filter(k=>S[k]);
-    const RL={notes:'Notes missing today',queries:'Trust queries open',discharge:'In ward after surgery',file:'Claims to file',trust:'No movement '+TRUST_STALL_DAYS+'+ days',ceo:'Awaiting CEO',approved:'CEO approved',paid:'Paid this month',money:'Preauth cut '+now.getFullYear()};
-    const groups=[['HOSPITAL MUST ACT',['notes','queries','discharge','file']],['WAITING ON THE TRUST',['trust','ceo','approved']],['MONEY',['paid','money']]];
+    const order=['queries','discharge','file','trust','ceo','approved','paid','money'].filter(k=>S[k]);
+    const RL={queries:'Trust queries open',discharge:'In ward after surgery',file:'Claims to file',trust:'No movement '+TRUST_STALL_DAYS+'+ days',ceo:'Awaiting CEO',approved:'CEO approved',paid:'Paid this month',money:'Preauth cut '+now.getFullYear()};
+    const groups=[['HOSPITAL MUST ACT',['queries','discharge','file']],['WAITING ON THE TRUST',['trust','ceo','approved']],['MONEY',['paid','money']]];
     $('al-kpis').innerHTML=groups.map(g=>{const ks=g[1].filter(k=>S[k]);return ks.length?'<div class="al-grp">'+g[0]+'</div>'+ks.map(k=>'<div class="al-kpi '+S[k].cls+'" data-go="'+k+'"><div class="l"><span class="l-t">'+S[k].l+'</span><span class="l-r">'+esc(RL[k])+'</span></div><div class="v">'+S[k].v+'</div><div class="s">'+S[k].s+'</div></div>').join(''):'';}).join('');
-    const badge=notes.length+queries.length+dueSoon.length+overdue.length;
+    const badge=queries.length+dueSoon.length+overdue.length;
     $('alerts-badge').textContent=badge;$('alerts-badge').style.display=badge?'inline':'none';
     alShow(alCurrent&&S[alCurrent]?alCurrent:(order.find(k=>typeof S[k].v==='number'&&S[k].v>0)||order[0]));
 
