@@ -63,6 +63,9 @@
   .kpi .l{font-size:11.5px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
   .kpi .v{font-size:26px;font-weight:700;margin-top:5px}
   .kpi .v.amber{color:var(--amber-fg)}.kpi .v.green{color:var(--green-fg)}
+  .subtiles{display:flex;flex-wrap:wrap;gap:8px;margin:-6px 0 16px}
+  .subtile{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:7px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:12.5px}
+  .subtile:hover{border-color:var(--border-strong)}.subtile.on{box-shadow:0 0 0 2px var(--primary)}.subtile b{font-size:15px;font-weight:700}
   .kpi[data-tile]{cursor:pointer}.kpi[data-tile]:hover{border-color:var(--border-strong)}.kpi[data-tile].on{box-shadow:0 0 0 2px var(--primary)}
   .nav{display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:3px;margin-left:8px}
   .nav button{border:none;background:none;color:var(--text-2);font-size:13px;font-weight:600;padding:6px 16px;border-radius:7px;cursor:pointer;font-family:inherit}
@@ -228,7 +231,8 @@
   .wtab td.dt{word-break:keep-all;overflow-wrap:normal}            /* breaks only at the space: date / time */
   .wtab td.amt{white-space:nowrap;word-break:normal;overflow-wrap:normal;text-align:right}
   .wtab th:nth-child(4),.wtab td:nth-child(4){width:20%}
-  .wtab td:nth-child(2),.wtab td:nth-child(4){word-break:normal;overflow-wrap:normal}  /* role and action break only between words: never "Recommende / d" */
+  .wtab td:nth-child(4){word-break:normal;overflow-wrap:normal}  /* action breaks only between words: never "Recommende / d" */
+  .wtab td:nth-child(2){overflow-wrap:anywhere;word-break:break-word}  /* long names such as DRSIVAPRASAD wrap inside the cell */
   .wtab th:nth-child(5),.wtab td:nth-child(5){width:13%}
   .wtab td.dt{color:var(--text-2)}
   .wtab td.rm p{white-space:pre-wrap;margin:0}.wtab td.rm ol{margin:0 0 0 16px;padding:0}
@@ -289,14 +293,6 @@
   </main>
 
   <main id="view-cases" style="display:none">
-    <div class="kpis" style="grid-template-columns:repeat(5,1fr)">
-      <!-- the five numbers follow the search and filters below; click one to show just those cases -->
-      <div class="kpi" data-tile="total" title="All cases matching the search and filters"><div class="l">Total cases</div><div class="v" id="k-total">–</div></div>
-      <div class="kpi" data-tile="unpaid" title="Cases not yet paid — click to show them"><div class="l">Unpaid cases</div><div class="v amber" id="k-unpaid">–</div></div>
-      <div class="kpi" data-tile="paid" title="Paid claims — click to show them"><div class="l">Paid cases</div><div class="v green" id="k-paid">–</div></div>
-      <div class="kpi" data-tile="hold" title="Status contains Hold or Stopped — click to show them"><div class="l">Hold / stopped</div><div class="v amber" id="k-hold">–</div></div>
-      <div class="kpi" data-tile="wf" title="Cases whose claim history has been read — click to show them"><div class="l">With timeline</div><div class="v" id="k-wf">–</div></div>
-    </div>
     <div class="toolbar">
       <input type="text" id="q" placeholder="Search case no, claim no, patient, card, phone — several with commas">
       <select id="cases-pay"><option value="">All cases</option><option value="unpaid">Unpaid only</option><option value="paid">Paid only</option></select>
@@ -308,6 +304,16 @@
       <button class="btn sm ghost" id="cases-clear">Clear</button>
       <button class="btn sm ghost" id="cases-export">⬇ Excel</button>
     </div>
+    <div class="kpis" style="grid-template-columns:repeat(5,1fr)">
+      <!-- the five numbers follow the search and filters above; click one to show just those cases -->
+      <div class="kpi" data-tile="total" title="All cases matching the search and filters"><div class="l">Total cases</div><div class="v" id="k-total">–</div></div>
+      <div class="kpi" data-tile="unpaid" title="Cases not yet paid — click to show them"><div class="l">Unpaid cases</div><div class="v amber" id="k-unpaid">–</div></div>
+      <div class="kpi" data-tile="paid" title="Paid claims — click to show them"><div class="l">Paid cases</div><div class="v green" id="k-paid">–</div></div>
+      <div class="kpi" data-tile="hold" title="Status contains Hold or Stopped — click to show them"><div class="l">Hold / stopped</div><div class="v amber" id="k-hold">–</div></div>
+      <div class="kpi" data-tile="wf" title="Cases whose claim history has been read — click to show them"><div class="l">With timeline</div><div class="v" id="k-wf">–</div></div>
+    </div>
+    <!-- the statuses inside the chosen tile, one chip each; click one to narrow the table to it -->
+    <div id="k-sub" class="subtiles" style="display:none"></div>
     <div class="card">
       <table style="table-layout:fixed">
         <thead><tr>
@@ -1132,7 +1138,8 @@ async function loadStats(){
 }
 // Cases tab: the single worklist — filter, sort, paginate the shared dataset.
 let casesSort={col:'status_date',dir:'desc'}, casesSetup=false;
-let casesTile=''; // '' | 'wf' | 'hold' | 'paid' — the tile clicked above the table
+let casesTile=''; // '' | 'unpaid' | 'paid' | 'hold' | 'wf' — the tile clicked above the table
+let casesSub=''; // a status chip chosen under that tile
 const hasTimeline=r=>!!(r.comment||r.comment_by);
 const isHold=r=>/hold|stopped/i.test(r.status||'');
 const tileFn={wf:hasTimeline,hold:isHold,paid:r=>!!r.is_paid,unpaid:r=>!r.is_paid};
@@ -1142,7 +1149,16 @@ function casesFilteredRows(){
   $('k-total').textContent=base.length.toLocaleString();$('k-wf').textContent=base.filter(hasTimeline).length.toLocaleString();
   $('k-hold').textContent=base.filter(isHold).length.toLocaleString();$('k-paid').textContent=base.filter(r=>r.is_paid).length.toLocaleString();$('k-unpaid').textContent=base.filter(r=>!r.is_paid).length.toLocaleString();
   document.querySelectorAll('#view-cases .kpi[data-tile]').forEach(k=>k.classList.toggle('on',k.dataset.tile===(casesTile||'total')));
-  return sortRows(casesTile&&tileFn[casesTile]?base.filter(tileFn[casesTile]):base,casesSort);
+  const tiled=casesTile&&tileFn[casesTile]?base.filter(tileFn[casesTile]):base;
+  // one chip per status inside the chosen tile, biggest first; chosen chip narrows the table
+  const sub=$('k-sub');
+  if(casesTile){const by={};tiled.forEach(r=>{const k=r.status||'(no status)';by[k]=(by[k]||0)+1;});
+    const ks=Object.keys(by).sort((a,b)=>by[b]-by[a]||a.localeCompare(b));
+    if(casesSub&&!by[casesSub])casesSub='';
+    sub.innerHTML=ks.map(k=>'<div class="subtile'+(casesSub===k?' on':'')+'" data-sub="'+esc(k)+'" title="Show only '+esc(k)+'"><span class="'+badge(k)+'">'+esc(k)+'</span><b>'+by[k].toLocaleString()+'</b></div>').join('');
+    sub.style.display=ks.length?'flex':'none';}
+  else{sub.innerHTML='';sub.style.display='none';casesSub='';}
+  return sortRows(casesSub?tiled.filter(r=>(r.status||'(no status)')===casesSub):tiled,casesSort);
 }
 function casesBaseRows(){
   const q=($('q').value||'').trim().toLowerCase(), st=$('status').value, pay=$('cases-pay').value, mon=$('cases-month').value;
@@ -1244,7 +1260,7 @@ async function showDetail(caseNo){
   const amtOK=v=>v!=null&&String(v).trim()!==''&&String(v).trim()!=='-';  // a workflow row shows its amount only when it has one
   $('p-title').textContent=c.case_no||caseNo;$('p-sub').textContent=(c.patient_name||'')+(c.nwh_name?' · '+c.nwh_name:'');
   const info=[['Claim no',c.claim_no],['Card no',c.card_no],['District',c.district],['Mandal',c.mandal],['Village',c.village],['Contact',c.contact_no],['IP no',c.ip_no],['IP registration',c.ip_registration_dt],['Category',c.category],['Procedure',c.procedure_name]];
-  let h='<div class="info">'+info.map(([k,v])=>`<div><div class="k">${k}</div><div class="val">${esc(v)||'–'}</div></div>`).join('')+'</div>';
+  let h='<div class="info">'+info.map(([k,v])=>`<div><div class="k">${k}</div><div class="val">${(v==null||/^null$/i.test(String(v).trim()))?'–':esc(v)}</div></div>`).join('')+'</div>';
   h+=`<div class="tlhead" style="margin-bottom:20px"><span class="${badge(c.claim_status)}" style="max-width:none">${esc(c.claim_status||c.case_status||'–')}</span>
     <div class="vtog"><button id="vt-tl" class="${wfView==='timeline'?'on':''}">Timeline</button><button id="vt-tb" class="${wfView==='table'?'on':''}">Table</button></div></div>`;
   // ---- clinical notes: one line per ward day; today highlighted when missing ----
@@ -1318,8 +1334,9 @@ $('cases-month').addEventListener('change',()=>{$('cases-from').value='';$('case
 $('cases-from').addEventListener('change',()=>{$('cases-month').value='';page=1;renderCases();});
 $('cases-to').addEventListener('change',()=>{$('cases-month').value='';page=1;renderCases();});
 $('pageSize').addEventListener('change',()=>{page=1;renderCases();});
-document.querySelectorAll('#view-cases .kpi[data-tile]').forEach(k=>k.onclick=()=>{const t=k.dataset.tile;casesTile=(t==='total'||casesTile===t)?'':t;page=1;renderCases();});
-$('cases-clear').onclick=()=>{casesTile='';$('q').value='';$('cases-pay').value='';$('status').value='';$('cases-month').value='';$('cases-from').value='';$('cases-to').value='';page=1;renderCases();};
+document.querySelectorAll('#view-cases .kpi[data-tile]').forEach(k=>k.onclick=()=>{const t=k.dataset.tile;casesTile=(t==='total'||casesTile===t)?'':t;casesSub='';page=1;renderCases();});
+$('k-sub').addEventListener('click',e=>{const c=e.target.closest('.subtile');if(!c)return;casesSub=casesSub===c.dataset.sub?'':c.dataset.sub;page=1;renderCases();});
+$('cases-clear').onclick=()=>{casesTile='';casesSub='';$('q').value='';$('cases-pay').value='';$('status').value='';$('cases-month').value='';$('cases-from').value='';$('cases-to').value='';page=1;renderCases();};
 $('cases-export').onclick=()=>{
   const rows=casesFilteredRows().map(r=>({'Case no':r.case_no,'Claim no':r.claim_no,'Patient':r.patient_name,'Claim status':r.status,'Claimed':r.claimed,'Paid':r.paid,'IP registration':r.ip_reg,'Status date':r.status_date,'Latest comment':r.comment}));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Cases');
