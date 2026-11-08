@@ -63,6 +63,16 @@
   .kpi .l{font-size:11.5px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
   .kpi .v{font-size:26px;font-weight:700;margin-top:5px}
   .kpi .v.amber{color:var(--amber-fg)}.kpi .v.green{color:var(--green-fg)}
+  .flow{display:flex;gap:8px;align-items:flex-start;margin:-6px 0 16px;overflow-x:auto;padding:2px 0 6px}
+  .stage{flex:1 1 0;min-width:128px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 8px 6px;position:relative}
+  .stage+.stage::before{content:'›';position:absolute;left:-8px;top:10px;color:var(--text-3);font-size:14px}
+  .stage.ended{background:var(--bg)}.stage.ended::before{content:'';}
+  .stage .sh{cursor:pointer;border-radius:6px;padding:2px 4px;margin:-2px -4px 4px}.stage .sh:hover{background:var(--bg)}.stage.on .sh{background:var(--primary-light)}
+  .stage .sl{font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:var(--text-3);font-weight:700;line-height:1.3}
+  .stage .sv{font-size:19px;font-weight:800;line-height:1.2}.stage .sv.zero{color:var(--text-3);font-weight:600}
+  .stage .st{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--text-2);padding:3px 4px;border-radius:5px;cursor:pointer;line-height:1.3}
+  .stage .st span{text-transform:none;letter-spacing:0;white-space:normal;overflow-wrap:anywhere}.stage .st b{color:var(--text);font-weight:700;flex:0 0 auto}
+  .stage .st:hover{background:var(--bg)}.stage .st.on{background:var(--primary-light);color:var(--primary-dark,var(--primary))}.stage .st.on b{color:var(--primary-dark,var(--primary))}
   .subtiles{display:flex;flex-wrap:wrap;gap:8px;margin:-6px 0 16px}
   .subtile{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 11px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);line-height:1.3}
   .subtile .nm{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1142,7 +1152,23 @@ async function loadStats(){
 // Cases tab: the single worklist — filter, sort, paginate the shared dataset.
 let casesSort={col:'status_date',dir:'desc'}, casesSetup=false;
 let casesTile=''; // '' | 'unpaid' | 'paid' | 'hold' | 'wf' — the tile clicked above the table
-let casesSub=''; // a status chip chosen under that tile
+let casesSub=''; // a status, or 'stage:<name>', chosen in the flow under the tiles
+// The claim's life, left to right. Statuses that end a case go to "Ended", whatever stage they left from.
+const STAGES=[
+  ['Ended',/Cancel|Reject|Failed Transaction|Terminated|Un Utilized|Claims Closed/i,true],
+  ['Preauth approved',/^Preauthorisation (PPD|PTD|PAO|CMA|Hub Doctor|MEDCO) Approved/i],
+  ['Preauth with Trust',/^Preauthorisation|^In Patient Case Registered|^Medical Management/i],
+  ['Surgery done',/^Surgery Update|^Treatment Schedule/i],
+  ['Discharged',/^Discharge Update/i],
+  ['Claim filed',/^Claim sent to Claim Executive|^Claim sent to Panel Doctor|^CEX /i],
+  ['Claim doctor',/^Claim Doctor|^CPD |^Claim Hub Doctor|^Claim-HTC/i],
+  ['Trust doctor',/^Claim Trust Doctor|^CTD |^Claim Forwarded to CTD|^Claim Send Back by CTD|^Claim Sent back by CTD/i],
+  ['EO · audit · CEO office',/^(JEO|EO)|^Claim sent to Medical Audit|^CMA|^AUDIT|^Claim sent to Claim Head|^Claim Sent back by CH|sent to CEO|Forwarded to CEO|Claim Stopped|Claim Kept|Patient Feedback|^Claim Discussion|^Claim Pending By Committee|^Claim Approved By Committee/i],
+  ['CEO approved',/^CEO Claim Approved|^Claim Ready For Payment|^Sent For Payment|^Account|^Accounts|^Bill /i],
+  ['Paid',/^Claim Paid|^Amount Credited/i],
+];
+const FLOW_ORDER=['Preauth with Trust','Preauth approved','Surgery done','Discharged','Claim filed','Claim doctor','Trust doctor','EO · audit · CEO office','CEO approved','Paid','Ended','Other'];
+const stageOf=st=>{const h=STAGES.find(([,re])=>re.test(st||''));return h?h[0]:'Other';};
 const hasTimeline=r=>!!(r.comment||r.comment_by);
 const isHold=r=>/hold|stopped/i.test(r.status||'');
 const tileFn={wf:hasTimeline,hold:isHold,paid:r=>!!r.is_paid,unpaid:r=>!r.is_paid};
@@ -1154,14 +1180,21 @@ function casesFilteredRows(){
   document.querySelectorAll('#view-cases .kpi[data-tile]').forEach(k=>k.classList.toggle('on',k.dataset.tile===(casesTile||'total')));
   const tiled=casesTile&&tileFn[casesTile]?base.filter(tileFn[casesTile]):base;
   // one chip per status inside the chosen tile, biggest first; chosen chip narrows the table
+  // the flow: every stage left to right with the number of cases now sitting in it, and the statuses inside
   const sub=$('k-sub');
-  if(casesTile){const by={};tiled.forEach(r=>{const k=r.status||'(no status)';by[k]=(by[k]||0)+1;});
-    const ks=Object.keys(by).sort((a,b)=>by[b]-by[a]||a.localeCompare(b));
-    if(casesSub&&!by[casesSub])casesSub='';
-    sub.innerHTML=ks.map(k=>'<div class="subtile'+(casesSub===k?' on':'')+'" data-sub="'+esc(k)+'" title="Show only '+esc(k)+'"><span class="nm">'+esc(k)+'</span><b>'+by[k].toLocaleString()+'</b></div>').join('');
-    sub.style.display=ks.length?'flex':'none';}
-  else{sub.innerHTML='';sub.style.display='none';casesSub='';}
-  return sortRows(casesSub?tiled.filter(r=>(r.status||'(no status)')===casesSub):tiled,casesSort);
+  const by={};tiled.forEach(r=>{const k=r.status||'(no status)';by[k]=(by[k]||0)+1;});
+  const stages={};FLOW_ORDER.forEach(st=>stages[st]={n:0,list:[]});
+  Object.keys(by).forEach(k=>{const st=stageOf(k);stages[st].n+=by[k];stages[st].list.push(k);});
+  const subStage=casesSub.startsWith('stage:')?casesSub.slice(6):'';
+  if(casesSub&&!subStage&&!by[casesSub])casesSub='';
+  if(subStage&&!stages[subStage].n)casesSub='';
+  sub.className='flow';
+  sub.innerHTML=FLOW_ORDER.filter(st=>st!=='Other'||stages[st].n).map(st=>{const g=stages[st];g.list.sort((a,b)=>by[b]-by[a]||a.localeCompare(b));
+    return '<div class="stage'+(st==='Ended'?' ended':'')+(subStage===st?' on':'')+'"><div class="sh" data-stage="'+esc(st)+'" title="Show every case at this stage"><div class="sl">'+esc(st)+'</div><div class="sv'+(g.n?'':' zero')+'">'+g.n.toLocaleString()+'</div></div>'
+      +g.list.map(k=>'<div class="st'+(casesSub===k?' on':'')+'" data-sub="'+esc(k)+'" title="'+esc(k)+'"><span>'+esc(k)+'</span><b>'+by[k].toLocaleString()+'</b></div>').join('')+'</div>';}).join('');
+  sub.style.display='flex';
+  const rows=subStage?tiled.filter(r=>stageOf(r.status||'')===subStage):(casesSub?tiled.filter(r=>(r.status||'(no status)')===casesSub):tiled);
+  return sortRows(rows,casesSort);
 }
 function casesBaseRows(){
   const q=($('q').value||'').trim().toLowerCase(), st=$('status').value, pay=$('cases-pay').value, mon=$('cases-month').value;
@@ -1338,7 +1371,9 @@ $('cases-from').addEventListener('change',()=>{$('cases-month').value='';page=1;
 $('cases-to').addEventListener('change',()=>{$('cases-month').value='';page=1;renderCases();});
 $('pageSize').addEventListener('change',()=>{page=1;renderCases();});
 document.querySelectorAll('#view-cases .kpi[data-tile]').forEach(k=>k.onclick=()=>{const t=k.dataset.tile;casesTile=(t==='total'||casesTile===t)?'':t;casesSub='';page=1;renderCases();});
-$('k-sub').addEventListener('click',e=>{const c=e.target.closest('.subtile');if(!c)return;casesSub=casesSub===c.dataset.sub?'':c.dataset.sub;page=1;renderCases();});
+$('k-sub').addEventListener('click',e=>{const c=e.target.closest('.st');const h=e.target.closest('.sh');
+  if(c){casesSub=casesSub===c.dataset.sub?'':c.dataset.sub;}else if(h){const v='stage:'+h.dataset.stage;casesSub=casesSub===v?'':v;}else return;
+  page=1;renderCases();});
 $('cases-clear').onclick=()=>{casesTile='';casesSub='';$('q').value='';$('cases-pay').value='';$('status').value='';$('cases-month').value='';$('cases-from').value='';$('cases-to').value='';page=1;renderCases();};
 $('cases-export').onclick=()=>{
   const rows=casesFilteredRows().map(r=>({'Case no':r.case_no,'Claim no':r.claim_no,'Patient':r.patient_name,'Claim status':r.status,'Claimed':r.claimed,'Paid':r.paid,'IP registration':r.ip_reg,'Status date':r.status_date,'Latest comment':r.comment}));
