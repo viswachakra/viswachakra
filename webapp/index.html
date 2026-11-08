@@ -63,6 +63,7 @@
   .kpi .l{font-size:11.5px;color:var(--text-2);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
   .kpi .v{font-size:26px;font-weight:700;margin-top:5px}
   .kpi .v.amber{color:var(--amber-fg)}.kpi .v.green{color:var(--green-fg)}
+  .kpi[data-tile]{cursor:pointer}.kpi[data-tile]:hover{border-color:var(--border-strong)}.kpi[data-tile].on{box-shadow:0 0 0 2px var(--primary)}
   .nav{display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:3px;margin-left:8px}
   .nav button{border:none;background:none;color:var(--text-2);font-size:13px;font-weight:600;padding:6px 16px;border-radius:7px;cursor:pointer;font-family:inherit}
   .nav button.on{background:var(--card);color:var(--primary);box-shadow:0 1px 2px rgba(16,19,34,.08)}
@@ -309,10 +310,11 @@
 
   <main id="view-cases" style="display:none">
     <div class="kpis">
-      <div class="kpi"><div class="l">Total cases</div><div class="v" id="k-total">–</div></div>
-      <div class="kpi"><div class="l">With timeline</div><div class="v" id="k-wf">–</div></div>
-      <div class="kpi"><div class="l">Hold / stopped</div><div class="v amber" id="k-hold">–</div></div>
-      <div class="kpi"><div class="l">Paid / credited</div><div class="v green" id="k-paid">–</div></div>
+      <!-- the four numbers follow the search and filters below; click one to show just those cases -->
+      <div class="kpi" data-tile="total" title="All cases matching the search and filters"><div class="l">Total cases</div><div class="v" id="k-total">–</div></div>
+      <div class="kpi" data-tile="wf" title="Cases whose claim history has been read — click to show them"><div class="l">With timeline</div><div class="v" id="k-wf">–</div></div>
+      <div class="kpi" data-tile="hold" title="Status contains Hold or Stopped — click to show them"><div class="l">Hold / stopped</div><div class="v amber" id="k-hold">–</div></div>
+      <div class="kpi" data-tile="paid" title="Paid claims — click to show them"><div class="l">Paid / credited</div><div class="v green" id="k-paid">–</div></div>
     </div>
     <div class="toolbar">
       <input type="text" id="q" placeholder="Search case no, claim no, patient, card, phone — several with commas">
@@ -1172,18 +1174,25 @@ async function loadDashboard(){
 }
 
 async function loadStats(){
-  const total=(await sb.from('cases').select('*',{count:'exact',head:true})).count||0;
-  const wf=(await sb.from('claim_workflow').select('case_no',{count:'exact',head:true})).count||0;
-  const hold=(await sb.from('cases').select('*',{count:'exact',head:true}).or('claim_status.ilike.%Hold%,claim_status.ilike.%Stopped%')).count||0;
-  const paid=(await sb.from('cases').select('*',{count:'exact',head:true}).eq('is_paid',true)).count||0;  // use is_paid so this agrees with the dashboard & tables
-  $('k-total').textContent=total.toLocaleString();$('k-wf').textContent=wf.toLocaleString();
-  $('k-hold').textContent=hold.toLocaleString();$('k-paid').textContent=paid.toLocaleString();
+  // the Cases-tab tiles are filled by renderCases from the filtered rows; this only sets the sync pill
   const {data}=await sb.from('cases').select('last_synced').not('last_synced','is',null).order('last_synced',{ascending:false}).limit(1);
   $('sync-pill').textContent=data&&data[0]?'Last sync '+new Date(data[0].last_synced).toLocaleString():'–';
 }
 // Cases tab: the single worklist — filter, sort, paginate the shared dataset.
 let casesSort={col:'status_date',dir:'desc'}, casesSetup=false;
+let casesTile=''; // '' | 'wf' | 'hold' | 'paid' — the tile clicked above the table
+const hasTimeline=r=>!!(r.comment||r.comment_by);
+const isHold=r=>/hold|stopped/i.test(r.status||'');
+const tileFn={wf:hasTimeline,hold:isHold,paid:r=>!!r.is_paid};
 function casesFilteredRows(){
+  const base=casesBaseRows();
+  // the four numbers describe what the search and filters left, before the tile narrows it
+  $('k-total').textContent=base.length.toLocaleString();$('k-wf').textContent=base.filter(hasTimeline).length.toLocaleString();
+  $('k-hold').textContent=base.filter(isHold).length.toLocaleString();$('k-paid').textContent=base.filter(r=>r.is_paid).length.toLocaleString();
+  document.querySelectorAll('#view-cases .kpi[data-tile]').forEach(k=>k.classList.toggle('on',k.dataset.tile===(casesTile||'total')));
+  return sortRows(casesTile&&tileFn[casesTile]?base.filter(tileFn[casesTile]):base,casesSort);
+}
+function casesBaseRows(){
   const q=($('q').value||'').trim().toLowerCase(), st=$('status').value, pay=$('cases-pay').value, mon=$('cases-month').value;
   const from=$('cases-from').value?new Date($('cases-from').value+'T00:00:00').getTime():null;
   const to=$('cases-to').value?new Date($('cases-to').value+'T23:59:59').getTime():null;
@@ -1194,7 +1203,7 @@ function casesFilteredRows(){
   if(mon)rows=rows.filter(r=>ymOf(r.ip_reg)===mon);
   if(from!=null||to!=null)rows=rows.filter(r=>{const t=dmy(r.ip_reg);if(!t)return false;if(from!=null&&t<from)return false;if(to!=null&&t>to)return false;return true;});
   if(q){const tq=qTerms(q);rows=rows.filter(r=>qHit(((r.case_no||'')+' '+(r.patient_name||'')+' '+(r.claim_no||'')+' '+(r.card_no||'')+' '+(r.contact_no||'')).toLowerCase(),tq));}
-  return sortRows(rows,casesSort);
+  return rows;
 }
 function setupCasesFilters(){
   const sel=$('status'),cur=sel.value;
@@ -1496,7 +1505,8 @@ $('cases-month').addEventListener('change',()=>{$('cases-from').value='';$('case
 $('cases-from').addEventListener('change',()=>{$('cases-month').value='';page=1;renderCases();});
 $('cases-to').addEventListener('change',()=>{$('cases-month').value='';page=1;renderCases();});
 $('pageSize').addEventListener('change',()=>{page=1;renderCases();});
-$('cases-clear').onclick=()=>{$('q').value='';$('cases-pay').value='';$('status').value='';$('cases-month').value='';$('cases-from').value='';$('cases-to').value='';page=1;renderCases();};
+document.querySelectorAll('#view-cases .kpi[data-tile]').forEach(k=>k.onclick=()=>{const t=k.dataset.tile;casesTile=(t==='total'||casesTile===t)?'':t;page=1;renderCases();});
+$('cases-clear').onclick=()=>{casesTile='';$('q').value='';$('cases-pay').value='';$('status').value='';$('cases-month').value='';$('cases-from').value='';$('cases-to').value='';page=1;renderCases();};
 $('cases-export').onclick=()=>{
   const rows=casesFilteredRows().map(r=>({'Case no':r.case_no,'Claim no':r.claim_no,'Patient':r.patient_name,'Claim status':r.status,'Claimed':r.claimed,'Paid':r.paid,'IP registration':r.ip_reg,'Status date':r.status_date,'Latest comment':r.comment}));
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Cases');
