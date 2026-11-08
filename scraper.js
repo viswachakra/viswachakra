@@ -662,6 +662,14 @@ async function runSync(opts = {}) {
       try {
         await reopenSearch();
         list = await scrapeResultsList(page);
+        // An empty list is only "no changes" if the portal said so. A search that
+        // timed out or came back blank looks the same, and taking it as zero moves
+        // the window past real changes (7 Nov 2026, 22:15: a preauth forwarded at
+        // 21:04 was skipped this way and only the morning self-check caught it).
+        if (!list.length) {
+          const saidNone = await page.evaluate(() => /No\s+(records|results)\s+found/i.test(document.body ? document.body.textContent : '')).catch(() => false);
+          if (!saidNone) throw new Error('search returned no results table (timeout or blocked)');
+        }
         break;
       } catch (e) {
         log(`  [initial search attempt ${attempt}/3 failed: ${(e && e.message) || e}]`);

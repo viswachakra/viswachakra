@@ -222,7 +222,20 @@ async function main() {
 
 const unlock = () => { try { fs.unlinkSync(LOCK); } catch (e) { /* already gone */ } };
 if (require.main === module) {
-  main().then((r) => { unlock(); process.exit(r.ok ? 0 : 2); }).catch(async (e) => {
+  // A network blip at 06:20 (7 Nov 2026: the portal's name would not resolve) must
+  // not cost the whole day: wait and try again, three times, before giving up.
+  const NET = /ERR_NAME_NOT_RESOLVED|ERR_NETWORK|ERR_CONNECTION|ERR_INTERNET|ECONN|ENOTFOUND|fetch failed|ERR_TIMED_OUT/i;
+  const run = async (attempt) => {
+    try { return await main(); } catch (e) {
+      if (attempt < 3 && NET.test(String(e.message || e))) {
+        log(`network not reachable (${String(e.message || e).split('\n')[0]}) - trying again in 5 minutes (${attempt}/3)`);
+        await new Promise((r) => setTimeout(r, 5 * 60 * 1000));
+        return run(attempt + 1);
+      }
+      throw e;
+    }
+  };
+  run(1).then((r) => { unlock(); process.exit(r.ok ? 0 : 2); }).catch(async (e) => {
     unlock();
     log('self-check FAILED: ' + (e.message || e));
     try { await sb.from('app_settings').upsert({ key: 'self_check_error', value: JSON.stringify({ at: new Date().toISOString(), error: String(e.message || e).split('\n')[0] }), updated_at: new Date().toISOString(), updated_by: 'self-check' }, { onConflict: 'key' }); } catch (x) { /* nothing more to do */ }
