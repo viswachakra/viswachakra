@@ -28,7 +28,9 @@ function computeApproved(rows){
 function computeSummary(rows){
   rows=[...rows].sort((a,b)=>a.row_index-b.row_index);
   const initiated=rows.find(r=>/initiated/i.test(r.action||''))||rows[0];
-  const paidRow=[...rows].reverse().find(r=>/paid/i.test(r.action||''));
+  // The bank's row carries the payment. Since 2019 its action reads "Paid"; the 2018
+  // rows have action "-" and the remark "Payment Done" (17 claims looked unpaid for this).
+  const paidRow=[...rows].reverse().find(r=>/paid/i.test(r.action||'')||(/BANK USER/i.test(r.role_name||'')&&/payment done/i.test(r.remarks||'')));
   const last=rows[rows.length-1];
   const claimed=initiated?parseAmt(initiated.amount):0;
   const initAt=initiated?parseWfDate(initiated.date_time):null;
